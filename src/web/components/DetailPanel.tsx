@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { TraceEntry, ParsedSSEChunk } from '../../types';
 
 // ── Color tokens ──────────────────────────────────────────────
@@ -132,6 +132,42 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  return (
+    <button
+      onClick={handleCopy}
+      style={{
+        background: copied ? '#a6e3a122' : 'transparent',
+        border: `1px solid ${copied ? '#a6e3a1' : C.border}`,
+        color: copied ? '#a6e3a1' : C.subtext,
+        fontSize: 11,
+        padding: '2px 8px',
+        borderRadius: 4,
+        cursor: 'pointer',
+        transition: 'all 0.15s',
+        fontFamily: 'inherit',
+        marginLeft: 8,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {copied ? 'Copied!' : (label || 'Copy')}
+    </button>
+  );
+}
+
 function HeaderTable({ headers }: { headers: Record<string, string> }) {
   const entries = Object.entries(headers);
   if (entries.length === 0) {
@@ -238,20 +274,27 @@ function RequestTab({ trace }: { trace: TraceEntry }) {
   const messagesCount = body?.messages?.length ?? 0;
   const toolsCount = body?.tools?.length ?? 0;
 
+  const bodyText = body
+    ? JSON.stringify(body, null, 2)
+    : trace.rawRequestBody
+      ? tryFormatJson(trace.rawRequestBody)
+      : null;
+
   return (
     <div>
       <SectionTitle>Request Headers</SectionTitle>
       <HeaderTable headers={trace.requestHeaders ?? {}} />
 
-      <SectionTitle>
-        Request Body
-        {messagesCount > 0 && <Badge>{messagesCount} message{messagesCount !== 1 ? 's' : ''}</Badge>}
-        {toolsCount > 0 && <Badge>{toolsCount} tool{toolsCount !== 1 ? 's' : ''}</Badge>}
-      </SectionTitle>
-      {body ? (
-        <CodeBlock>{JSON.stringify(body, null, 2)}</CodeBlock>
-      ) : trace.rawRequestBody ? (
-        <CodeBlock>{tryFormatJson(trace.rawRequestBody)}</CodeBlock>
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+        <SectionTitle>
+          Request Body
+          {messagesCount > 0 && <Badge>{messagesCount} message{messagesCount !== 1 ? 's' : ''}</Badge>}
+          {toolsCount > 0 && <Badge>{toolsCount} tool{toolsCount !== 1 ? 's' : ''}</Badge>}
+        </SectionTitle>
+        {bodyText && <CopyButton text={bodyText} />}
+      </div>
+      {bodyText ? (
+        <CodeBlock>{bodyText}</CodeBlock>
       ) : (
         <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No request body</div>
       )}
@@ -261,108 +304,346 @@ function RequestTab({ trace }: { trace: TraceEntry }) {
 
 function ResponseTab({ trace }: { trace: TraceEntry }) {
   const assembled = trace.assembled;
+  const isSSE = trace.isSSE || (trace.chunks?.length ?? 0) > 0;
+  const jsonl = isSSE ? buildJsonl(trace.chunks ?? []) : '';
+  const jsonlChunkCount = isSSE
+    ? (trace.chunks ?? []).filter((c) => c.raw !== '[DONE]' && c.raw.trim()).length
+    : 0;
 
-  if (assembled) {
-    return (
-      <div>
-        <SectionTitle>Response Text</SectionTitle>
-        {assembled.fullText ? (
-          <CodeBlock>{assembled.fullText}</CodeBlock>
-        ) : (
-          <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No text content</div>
-        )}
-
-        {assembled.thinkingText ? (
-          <>
-            <SectionTitle>Thinking</SectionTitle>
-            <CodeBlock>{assembled.thinkingText}</CodeBlock>
-          </>
-        ) : null}
-
-        {assembled.toolCalls.length > 0 && (
-          <>
-            <SectionTitle>Tool Calls ({assembled.toolCalls.length})</SectionTitle>
-            <CodeBlock>{JSON.stringify(assembled.toolCalls, null, 2)}</CodeBlock>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  if (trace.responseBody) {
-    return (
-      <div>
-        <SectionTitle>Response Body</SectionTitle>
-        <CodeBlock>{tryFormatJson(trace.responseBody)}</CodeBlock>
-      </div>
-    );
-  }
+  // Build the full copyable response text
+  const buildFullResponse = (): string => {
+    const parts: string[] = [];
+    if (assembled) {
+      if (assembled.fullText) parts.push(assembled.fullText);
+      if (assembled.thinkingText) parts.push(`[Thinking]\n${assembled.thinkingText}`);
+      if (assembled.toolCalls.length > 0) {
+        parts.push(`[Tool Calls]\n${JSON.stringify(assembled.toolCalls, null, 2)}`);
+      }
+    } else if (trace.responseBody) {
+      parts.push(tryFormatJson(trace.responseBody));
+    }
+    return parts.join('\n\n');
+  };
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: 200,
-        color: C.dimText,
-        fontSize: 14,
-      }}
-    >
-      No response data
+    <div>
+      {/* Response Headers */}
+      <SectionTitle>Response Headers</SectionTitle>
+      {Object.keys(trace.responseHeaders ?? {}).length > 0 ? (
+        <HeaderTable headers={trace.responseHeaders} />
+      ) : (
+        <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No response headers</div>
+      )}
+
+      {/* Quick copy actions for SSE — full raw stream as JSONL */}
+      {isSSE && jsonlChunkCount > 0 && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+            <SectionTitle>
+              Raw SSE Stream
+              <Badge>JSONL</Badge>
+            </SectionTitle>
+            <CopyButton text={jsonl} label={`Copy as JSONL (${jsonlChunkCount})`} />
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: C.dimText,
+              marginBottom: 8,
+              lineHeight: 1.5,
+            }}
+          >
+            Each line is one OpenAI <code style={{ color: C.subtext }}>ChatCompletionChunk</code>. The trailing
+            <code style={{ color: C.subtext }}> [DONE]</code> sentinel is excluded so the output is valid JSONL.
+            Switch to the <strong style={{ color: C.subtext }}>SSE Stream</strong> tab to inspect chunks individually.
+          </div>
+        </>
+      )}
+
+      {/* Response Body */}
+      {assembled ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+            <SectionTitle>Assembled Response</SectionTitle>
+            {(assembled.fullText || assembled.toolCalls.length > 0) && (
+              <CopyButton text={buildFullResponse()} label="Copy All" />
+            )}
+          </div>
+          {assembled.fullText ? (
+            <CodeBlock>{assembled.fullText}</CodeBlock>
+          ) : (
+            <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No text content</div>
+          )}
+
+          {assembled.thinkingText ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+                <SectionTitle>Thinking</SectionTitle>
+                <CopyButton text={assembled.thinkingText} />
+              </div>
+              <CodeBlock>{assembled.thinkingText}</CodeBlock>
+            </>
+          ) : null}
+
+          {assembled.toolCalls.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+                <SectionTitle>Tool Calls ({assembled.toolCalls.length})</SectionTitle>
+                <CopyButton text={JSON.stringify(assembled.toolCalls, null, 2)} />
+              </div>
+              <CodeBlock>{JSON.stringify(assembled.toolCalls, null, 2)}</CodeBlock>
+            </>
+          )}
+        </>
+      ) : trace.responseBody ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+            <SectionTitle>
+              Response Body
+              <Badge>non-streaming</Badge>
+            </SectionTitle>
+            <CopyButton text={tryFormatJson(trace.responseBody)} />
+          </div>
+          <div style={{ fontSize: 11, color: C.dimText, marginBottom: 8 }}>
+            This response did not use SSE streaming — likely a <code style={{ color: C.subtext }}>/v1/models</code>,
+            <code style={{ color: C.subtext }}> /v1/embeddings</code>, a <code style={{ color: C.subtext }}>stream:false </code>
+            request, or a non-streaming error payload.
+          </div>
+          <CodeBlock>{tryFormatJson(trace.responseBody)}</CodeBlock>
+        </>
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: 200,
+            color: C.dimText,
+            fontSize: 14,
+          }}
+        >
+          No response data
+        </div>
+      )}
     </div>
   );
 }
+
+// ── SSE chunk classification ──────────────────────────────────
+
+type ChunkKind = 'content' | 'tool_call' | 'role' | 'finish' | 'usage' | 'done' | 'empty' | 'invalid';
+type FilterKind = 'all' | 'content' | 'tool_call' | 'meta';
+
+function classifyChunk(chunk: ParsedSSEChunk): ChunkKind {
+  if (chunk.raw === '[DONE]') return 'done';
+  const p = chunk.parsed;
+  if (!p) return 'invalid';
+  if (p.delta?.tool_calls && p.delta.tool_calls.length > 0) return 'tool_call';
+  if (p.delta?.content) return 'content';
+  if (p.delta?.role) return 'role';
+  if (p.finish_reason) return 'finish';
+  if (p.usage) return 'usage';
+  return 'empty';
+}
+
+function chunkSummary(chunk: ParsedSSEChunk, kind: ChunkKind): { label: string; value: string; color: string } {
+  const p = chunk.parsed;
+  switch (kind) {
+    case 'done':
+      return { label: '[DONE]', value: 'stream end', color: C.dimText };
+    case 'invalid':
+      return { label: 'invalid', value: chunk.raw.slice(0, 80), color: C.errorText };
+    case 'content':
+      return { label: 'content', value: p?.delta?.content ?? '', color: C.text };
+    case 'tool_call': {
+      const tc = p?.delta?.tool_calls?.[0];
+      const parts: string[] = [];
+      if (tc?.id) parts.push(`id=${tc.id}`);
+      if (tc?.function?.name) parts.push(`fn=${tc.function.name}`);
+      if (tc?.function?.arguments) parts.push(tc.function.arguments);
+      return { label: `tool_call[${tc?.index ?? '?'}]`, value: parts.join(' '), color: C.warningText };
+    }
+    case 'role':
+      return { label: 'role', value: p?.delta?.role ?? '', color: C.subtext };
+    case 'finish':
+      return { label: 'finish_reason', value: p?.finish_reason ?? '', color: C.successText };
+    case 'usage': {
+      const u = p?.usage;
+      return {
+        label: 'usage',
+        value: `prompt=${u?.prompt_tokens ?? '--'} completion=${u?.completion_tokens ?? '--'} total=${u?.total_tokens ?? '--'}`,
+        color: C.successText,
+      };
+    }
+    case 'empty':
+    default:
+      return { label: 'empty delta', value: '', color: C.dimText };
+  }
+}
+
+function matchesFilter(kind: ChunkKind, filter: FilterKind): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'content') return kind === 'content' || kind === 'role';
+  if (filter === 'tool_call') return kind === 'tool_call';
+  if (filter === 'meta') return kind === 'finish' || kind === 'usage' || kind === 'done';
+  return true;
+}
+
+/** Build standard JSONL: one JSON object per line, [DONE] excluded. Invalid chunks kept as-is. */
+function buildJsonl(chunks: ParsedSSEChunk[]): string {
+  const lines: string[] = [];
+  for (const c of chunks) {
+    if (c.raw === '[DONE]') continue;
+    const trimmed = c.raw.trim();
+    if (!trimmed) continue;
+    lines.push(trimmed);
+  }
+  return lines.join('\n');
+}
+
+// ── SSE Stream tab ────────────────────────────────────────────
 
 function SSEStreamTab({ trace }: { trace: TraceEntry }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isStreaming = trace.state === 'streaming';
   const chunks = trace.chunks ?? [];
 
+  const [filter, setFilter] = useState<FilterKind>('all');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [bulkExpand, setBulkExpand] = useState<'collapsed' | 'expanded'>('collapsed');
+
+  // Reset per-trace UI state
   useEffect(() => {
-    if (isStreaming && scrollRef.current) {
+    setExpandedIds(new Set());
+    setBulkExpand('collapsed');
+    setFilter('all');
+  }, [trace.id]);
+
+  // Auto-scroll while streaming
+  useEffect(() => {
+    if (autoScroll && isStreaming && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [chunks.length, isStreaming]);
+  }, [chunks.length, isStreaming, autoScroll]);
+
+  const toggleChunk = useCallback((index: number) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const expandAll = useCallback(() => {
+    setBulkExpand('expanded');
+    setExpandedIds(new Set(chunks.map((_, i) => i)));
+  }, [chunks]);
+
+  const collapseAll = useCallback(() => {
+    setBulkExpand('collapsed');
+    setExpandedIds(new Set());
+  }, []);
+
+  const jsonl = buildJsonl(chunks);
+  const validJsonlCount = chunks.filter((c) => c.raw !== '[DONE]' && c.raw.trim()).length;
+
+  // Apply filter, but keep original index for display
+  const visible = chunks
+    .map((chunk, index) => ({ chunk, index, kind: classifyChunk(chunk) }))
+    .filter(({ kind }) => matchesFilter(kind, filter));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
+
+      {/* Toolbar */}
       <div
         style={{
-          padding: '8px 0',
-          fontSize: 12,
-          color: C.subtext,
-          borderBottom: `1px solid ${C.border}`,
           display: 'flex',
+          flexWrap: 'wrap',
           alignItems: 'center',
           gap: 8,
+          padding: '10px 0',
+          borderBottom: `1px solid ${C.border}`,
           flexShrink: 0,
         }}
       >
-        <span style={{ fontWeight: 600, color: C.text }}>{chunks.length}</span> chunk{chunks.length !== 1 ? 's' : ''}
-        {isStreaming && (
-          <span
-            style={{
-              display: 'inline-block',
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: C.accent,
-              animation: 'pulse 1.2s ease-in-out infinite',
-              marginLeft: 4,
-            }}
+        <span style={{ fontSize: 12, color: C.subtext, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: 600, color: C.text }}>{chunks.length}</span>
+          chunk{chunks.length !== 1 ? 's' : ''}
+          {isStreaming && (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: C.accent,
+                animation: 'pulse 1.2s ease-in-out infinite',
+              }}
+            />
+          )}
+          {filter !== 'all' && (
+            <span style={{ color: C.dimText }}>
+              · showing <span style={{ color: C.accent, fontWeight: 600 }}>{visible.length}</span>
+            </span>
+          )}
+        </span>
+
+        <span style={{ flex: 1 }} />
+
+        {/* Filter */}
+        <SegmentedControl
+          value={filter}
+          onChange={(v) => setFilter(v as FilterKind)}
+          options={[
+            { id: 'all', label: 'All' },
+            { id: 'content', label: 'Content' },
+            { id: 'tool_call', label: 'Tools' },
+            { id: 'meta', label: 'Meta' },
+          ]}
+        />
+
+        {/* Expand/Collapse */}
+        <ToolbarButton onClick={bulkExpand === 'expanded' ? collapseAll : expandAll}>
+          {bulkExpand === 'expanded' ? 'Collapse all' : 'Expand all'}
+        </ToolbarButton>
+
+        {/* Auto-scroll */}
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 11,
+            color: C.subtext,
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={autoScroll}
+            onChange={(e) => setAutoScroll(e.target.checked)}
+            style={{ accentColor: C.accent, cursor: 'pointer' }}
           />
-        )}
+          Auto-scroll
+        </label>
+
+        {/* Copy as JSONL */}
+        {validJsonlCount > 0 && <CopyButton text={jsonl} label={`Copy as JSONL (${validJsonlCount})`} />}
       </div>
 
-      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
-
+      {/* Chunk list */}
       <div
         ref={scrollRef}
         style={{
           flex: 1,
           overflow: 'auto',
           minHeight: 0,
+          padding: '8px 0',
         }}
       >
         {chunks.length === 0 ? (
@@ -378,110 +659,277 @@ function SSEStreamTab({ trace }: { trace: TraceEntry }) {
           >
             {isStreaming ? 'Waiting for chunks...' : 'No SSE chunks'}
           </div>
+        ) : visible.length === 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: 120,
+              color: C.dimText,
+              fontSize: 13,
+            }}
+          >
+            No chunks match the current filter.
+          </div>
         ) : (
-          chunks.map((chunk, i) => <ChunkRow key={i} chunk={chunk} index={i} />)
+          visible.map(({ chunk, index, kind }) => (
+            <ChunkCard
+              key={index}
+              chunk={chunk}
+              index={index}
+              kind={kind}
+              expanded={expandedIds.has(index)}
+              onToggle={() => toggleChunk(index)}
+            />
+          ))
         )}
       </div>
     </div>
   );
 }
 
-function ChunkRow({ chunk, index }: { chunk: ParsedSSEChunk; index: number }) {
-  const p = chunk.parsed;
-  const deltaContent = p?.delta?.content;
-  const deltaToolCalls = p?.delta?.tool_calls;
-  const finishReason = p?.finish_reason;
-  const usage = p?.usage;
+function ToolbarButton({
+  children,
+  onClick,
+  active,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: active ? C.tabActive : 'transparent',
+        border: `1px solid ${active ? C.accent : C.border}`,
+        color: active ? C.accent : C.subtext,
+        fontSize: 11,
+        padding: '2px 8px',
+        borderRadius: 4,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        whiteSpace: 'nowrap',
+        transition: 'all 0.15s',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
-  let contentNode: React.ReactNode = null;
+function SegmentedControl<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { id: T; label: string }[];
+}) {
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        border: `1px solid ${C.border}`,
+        borderRadius: 4,
+        overflow: 'hidden',
+      }}
+    >
+      {options.map((opt, i) => {
+        const active = opt.id === value;
+        return (
+          <button
+            key={opt.id}
+            onClick={() => onChange(opt.id)}
+            style={{
+              background: active ? C.tabActive : 'transparent',
+              color: active ? C.accent : C.subtext,
+              border: 'none',
+              borderLeft: i === 0 ? 'none' : `1px solid ${C.border}`,
+              fontSize: 11,
+              padding: '2px 10px',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              fontWeight: active ? 600 : 400,
+              transition: 'all 0.15s',
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-  if (deltaContent) {
-    contentNode = (
-      <span
+function ChunkCard({
+  chunk,
+  index,
+  kind,
+  expanded,
+  onToggle,
+}: {
+  chunk: ParsedSSEChunk;
+  index: number;
+  kind: ChunkKind;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const summary = chunkSummary(chunk, kind);
+
+  // The "raw" stored on the chunk is already the JSON string (data: prefix stripped).
+  // For display we pretty-print it; for copy we keep the original (single-line) JSON to stay JSONL-friendly.
+  const isDone = kind === 'done';
+  const prettyJson = !isDone ? tryFormatJson(chunk.raw) : chunk.raw;
+  const copyJson = chunk.raw;
+
+  // [DONE] marker — render as a single thin row, not a card
+  if (isDone) {
+    return (
+      <div
         style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '6px 10px',
+          margin: '4px 0',
+          fontSize: 11,
+          color: C.dimText,
           fontFamily: 'monospace',
-          fontSize: 12,
-          color: C.text,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
+          background: 'transparent',
+          borderTop: `1px dashed ${C.border}`,
+          borderBottom: `1px dashed ${C.border}`,
         }}
       >
-        {deltaContent}
-      </span>
-    );
-  } else if (deltaToolCalls && deltaToolCalls.length > 0) {
-    const tc = deltaToolCalls[0];
-    const parts: string[] = [];
-    if (tc.function?.name) parts.push(`fn: ${tc.function.name}`);
-    if (tc.function?.arguments) parts.push(tc.function.arguments);
-    contentNode = (
-      <span style={{ fontFamily: 'monospace', fontSize: 12, color: C.warningText }}>
-        tool_call[{tc.index}] {parts.join(' ')}
-      </span>
-    );
-  } else if (finishReason) {
-    contentNode = (
-      <span style={{ fontSize: 12, color: C.successText, fontWeight: 600 }}>
-        finish_reason: {finishReason}
-      </span>
-    );
-  } else if (usage) {
-    contentNode = (
-      <span style={{ fontSize: 12, color: C.subtext }}>
-        usage: {usage.total_tokens ?? '--'} tokens
-      </span>
-    );
-  } else if (p?.delta?.role) {
-    contentNode = (
-      <span style={{ fontSize: 12, color: C.subtext }}>
-        role: {p.delta.role}
-      </span>
-    );
-  } else {
-    contentNode = (
-      <span style={{ fontSize: 12, color: C.dimText }}>
-        (empty delta)
-      </span>
+        <span style={{ width: 36, textAlign: 'right' }}>{index}</span>
+        <span style={{ color: C.accent, width: 72 }}>+{Math.round(chunk.elapsed)}ms</span>
+        <span style={{ flex: 1 }}>──── [DONE] ────</span>
+      </div>
     );
   }
 
   return (
     <div
       style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 10,
-        padding: '4px 0',
-        borderBottom: `1px solid ${C.border}`,
-        minHeight: 24,
+        background: C.codeBg,
+        border: `1px solid ${C.border}`,
+        borderRadius: 6,
+        margin: '6px 0',
+        overflow: 'hidden',
       }}
     >
-      <span
+      {/* Header — clickable to toggle */}
+      <div
+        onClick={onToggle}
         style={{
-          width: 36,
-          minWidth: 36,
-          textAlign: 'right',
-          color: C.dimText,
-          fontSize: 11,
-          fontFamily: 'monospace',
-          lineHeight: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '6px 10px',
+          cursor: 'pointer',
+          userSelect: 'none',
+          background: expanded ? C.tabActive : 'transparent',
+          transition: 'background 0.15s',
         }}
       >
-        {index}
-      </span>
-      <span
-        style={{
-          width: 72,
-          minWidth: 72,
-          color: C.accent,
-          fontSize: 12,
-          fontFamily: 'monospace',
-          lineHeight: '20px',
-        }}
-      >
-        +{Math.round(chunk.elapsed)}ms
-      </span>
-      <span style={{ flex: 1, lineHeight: '20px' }}>{contentNode}</span>
+        <span
+          style={{
+            color: C.dimText,
+            fontSize: 10,
+            fontFamily: 'monospace',
+            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            transition: 'transform 0.15s',
+            display: 'inline-block',
+            width: 10,
+          }}
+        >
+          ▶
+        </span>
+        <span
+          style={{
+            width: 36,
+            textAlign: 'right',
+            color: C.dimText,
+            fontSize: 11,
+            fontFamily: 'monospace',
+          }}
+        >
+          #{index}
+        </span>
+        <span
+          style={{
+            width: 70,
+            color: C.accent,
+            fontSize: 11,
+            fontFamily: 'monospace',
+          }}
+        >
+          +{Math.round(chunk.elapsed)}ms
+        </span>
+        <span
+          style={{
+            width: 56,
+            color: C.dimText,
+            fontSize: 11,
+            fontFamily: 'monospace',
+          }}
+          title="Time since previous chunk"
+        >
+          Δ{Math.round(chunk.deltaMs)}ms
+        </span>
+        <span
+          style={{
+            color: summary.color,
+            fontSize: 11,
+            fontFamily: 'monospace',
+            fontWeight: 600,
+            minWidth: 90,
+          }}
+        >
+          {summary.label}
+        </span>
+        <span
+          style={{
+            flex: 1,
+            color: summary.color,
+            fontSize: 12,
+            fontFamily: 'monospace',
+            whiteSpace: 'pre',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            opacity: 0.85,
+          }}
+        >
+          {summary.value}
+        </span>
+        <span onClick={(e) => e.stopPropagation()}>
+          <CopyButton text={copyJson} label="Copy" />
+        </span>
+      </div>
+
+      {/* Body */}
+      {expanded && (
+        <div style={{ borderTop: `1px solid ${C.border}` }}>
+          <pre
+            style={{
+              background: 'transparent',
+              color: C.text,
+              padding: 12,
+              margin: 0,
+              fontSize: 12,
+              lineHeight: 1.5,
+              overflow: 'auto',
+              maxHeight: 360,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            <code>{prettyJson}</code>
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
