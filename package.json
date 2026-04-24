@@ -1,0 +1,37 @@
+{
+  "name": "qwentrace",
+  "version": "0.1.0",
+  "description": "Network request visualizer for Qwen Code Agent — like Charles for AI",
+  "type": "module",
+  "bin": {
+    "qwentrace": "dist/server/index.js"
+  },
+  "scripts": {
+    "dev": "concurrently \"tsx src/server/index.ts\" \"vite\"",
+    "dev:server": "tsx src/server/index.ts",
+    "dev:web": "vite",
+    "build": "vite build && tsc -p tsconfig.node.json",
+    "start": "node dist/server/index.js",
+    "trace": "tsx src/server/index.ts --"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "open": "^10.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.5.12",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  }
+}
