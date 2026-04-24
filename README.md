@@ -6,6 +6,8 @@ QwenTrace captures all HTTP traffic between Qwen Code and AI models (DashScope, 
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+[中文文档](./README_CN.md)
+
 ## How It Works
 
 QwenTrace uses a **fetch hook** approach — it patches `globalThis.fetch` via Node.js `--import` before any application code runs. This lets it transparently intercept all outgoing requests without MITM proxies or certificates.
