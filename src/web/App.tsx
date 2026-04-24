@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTraces } from './hooks/useTraces';
 import Sidebar from './components/Sidebar';
 import DetailPanel from './components/DetailPanel';
@@ -10,6 +10,34 @@ export default function App() {
   const selectedTrace = selectedId
     ? traces.find((t) => t.id === selectedId) ?? null
     : null;
+
+  // ---- Export / Save ----
+  const exportTraces = useCallback(() => {
+    if (traces.length === 0) return;
+    const json = JSON.stringify(traces, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.download = `qwentrace-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [traces]);
+
+  // Ctrl+S / Cmd+S keyboard shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        exportTraces();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [exportTraces]);
 
   return (
     <div style={{
@@ -68,6 +96,35 @@ export default function App() {
           <span style={{ fontSize: 11, color: '#6c7086' }}>
             {traces.length} request{traces.length !== 1 ? 's' : ''}
           </span>
+
+          {/* Save button */}
+          <button
+            onClick={exportTraces}
+            title="Export traces (Ctrl+S)"
+            style={{
+              background: 'transparent',
+              border: '1px solid #313244',
+              color: '#6c7086',
+              fontSize: 11,
+              padding: '2px 10px',
+              borderRadius: 4,
+              cursor: traces.length > 0 ? 'pointer' : 'not-allowed',
+              transition: 'all 0.15s',
+              opacity: traces.length > 0 ? 1 : 0.4,
+            }}
+            onMouseEnter={(e) => {
+              if (traces.length > 0) {
+                e.currentTarget.style.borderColor = '#89b4fa';
+                e.currentTarget.style.color = '#89b4fa';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#313244';
+              e.currentTarget.style.color = '#6c7086';
+            }}
+          >
+            Save
+          </button>
 
           {/* Clear button */}
           <button
