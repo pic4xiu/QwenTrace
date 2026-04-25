@@ -76,22 +76,50 @@ This starts the backend server and Vite dev server concurrently. Dashboard is at
 
 ## What It Captures
 
-- **Request**: URL, method, headers, full JSON body (model, messages, tools, parameters)
-- **Response**: status, headers, SSE stream chunks in real-time
+- **Request**: URL, method, full JSON body (model, messages, tools, parameters)
+- **Response**: status, SSE stream chunks in real-time
 - **Assembled output**: full text, tool calls (with incremental argument assembly), thinking text
 - **Timing**: TTFB, total duration, per-chunk delta timing
 - **Token usage**: prompt tokens, completion tokens, total tokens, cached tokens
+- **Agent role**: which Qwen Code agent emitted the call (see below)
+
+> Headers are deliberately **not** captured — Qwen Code's pipeline never reads
+> response headers, request headers contain only SDK metadata plus a bearer
+> token (a security risk in shared exports), and stripping them keeps the UI
+> focused on the AI conversation itself.
+
+## Agent Role Detection
+
+A single `chat/completions` user turn in Qwen Code typically fans out into
+several backend calls — the main interactive agent, an automated memory
+selector, one or two memory-extraction subagents, plus session services
+(title, recap, compression). Without context every row in the sidebar
+looks the same.
+
+QwenTrace identifies the originating agent for every trace by matching the
+system prompt against the known constants in qwen-code source. Currently
+recognized roles:
+
+- **Main agent** — the interactive CLI agent that responds to your input
+- **Memory selector / extractor / dream** — the three managed-memory subagents
+- **Session recap / title** — short-lived utilities for the session UI
+- **Context compressor** — runs when the chat history overflows
+- **Built-in subagents** — `general-purpose`, `Explore`, `statusline-setup`, agent architect
+
+Each role gets a colored chip in the sidebar and a prominent identity card at
+the top of the detail panel. Anything that doesn't match a known signature
+is shown as `Unknown` (likely a custom subagent or MCP server).
 
 ## Dashboard
 
 The dashboard is a dark-themed (Catppuccin Mocha) single-page app with:
 
-- **Sidebar**: scrollable request list showing model, status, duration, token count, and streaming state
+- **Sidebar**: scrollable request list showing role chip, model, status, duration, token count, and streaming state
 - **Detail panel** with 5 tabs:
-  - **Overview** — URL, model, status, timing, token usage grid
-  - **Request** — headers table, formatted JSON body with message/tool count badges
-  - **Response** — assembled text, tool calls, or raw JSON
-  - **SSE Stream** — chronological chunk list with elapsed times, auto-scroll during streaming
+  - **Overview** — agent role identity card, URL, model, status, timing, token usage grid
+  - **Request** — formatted JSON body with message/tool count badges
+  - **Pretty** — human-rendered view: assembled text, thinking, tool calls
+  - **Raw** — completely unprocessed response body (raw SSE stream or full JSON)
   - **Timing** — proportional TTFB vs streaming bar, token generation rate
 
 ## Architecture
@@ -108,8 +136,10 @@ src/
 │   ├── App.css            # Global styles (Catppuccin Mocha)
 │   ├── hooks/
 │   │   └── useTraces.ts   # WebSocket hook with auto-reconnect
+│   ├── utils/
+│   │   └── agentRole.ts   # Qwen Code agent role detection (system prompt → role)
 │   └── components/
-│       ├── Sidebar.tsx    # Request list
+│       ├── Sidebar.tsx    # Request list with role chips
 │       └── DetailPanel.tsx # 5-tab detail view
 └── types.ts               # Shared types (TraceEntry, TraceEvent, etc.)
 ```

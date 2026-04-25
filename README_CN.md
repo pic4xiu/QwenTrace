@@ -74,22 +74,46 @@ npm run dev
 
 ## 抓取内容
 
-- **请求**：URL、方法、headers、完整 JSON body（model、messages、tools、参数）
-- **响应**：状态码、headers、SSE 流 chunk 实时捕获
+- **请求**：URL、方法、完整 JSON body（model、messages、tools、参数）
+- **响应**：状态码、SSE 流 chunk 实时捕获
 - **组装结果**：完整文本、tool calls（增量拼接 arguments）、thinking 文本
 - **耗时**：TTFB、总时长、每个 chunk 的间隔时间
 - **Token 用量**：prompt tokens、completion tokens、total tokens、cached tokens
+- **Agent 角色**：识别每个请求来自哪个 Qwen Code agent（见下文）
+
+> 故意**不**抓 headers — Qwen Code 的 pipeline 从来不读 response headers，
+> request headers 里只有 SDK 元信息和一个 bearer token（导出时是安全隐患），
+> 去掉它们能让 UI 更聚焦在 AI 对话本身。
+
+## Agent 角色识别
+
+Qwen Code 里你发一句话，背后通常会触发好几个请求 — 主对话 agent、
+memory 筛选 subagent、1~2 轮 memory extraction subagent、还有 session
+title / recap / compression 等基础设施服务。如果不区分，sidebar 里每行
+看起来都一样。
+
+QwenTrace 通过匹配 system prompt 与 qwen-code 源码里的固定常量，自动识
+别每条 trace 的发起方。当前支持的角色：
+
+- **Main agent** — 真正回应你输入的主对话 agent
+- **Memory selector / extractor / dream** — 三个 managed memory 子代理
+- **Session recap / title** — 会话相关的短任务服务
+- **Context compressor** — 上下文超限时触发的压缩任务
+- **内置 subagent** — `general-purpose`、`Explore`、`statusline-setup`、agent architect
+
+每个角色在侧边栏对应一个色块徽章，详情页顶部还有一张身份卡。识别不到
+的会显示为 `Unknown`（一般是自定义 subagent 或 MCP server）。
 
 ## 面板
 
 暗色主题（Catppuccin Mocha）单页应用：
 
-- **侧边栏**：请求列表，显示模型名、状态码、耗时、token 数、流式状态
+- **侧边栏**：请求列表，显示角色徽章、模型名、状态码、耗时、token 数、流式状态
 - **详情面板** 5 个 Tab：
-  - **Overview** — URL、模型、状态、耗时、token 用量
-  - **Request** — headers 表格、格式化 JSON body、message/tool 数量标签
-  - **Response** — 组装后的文本、tool calls、或原始 JSON
-  - **SSE Stream** — 按时间排列的 chunk 列表，流式时自动滚动
+  - **Overview** — Agent 角色身份卡、URL、模型、状态、耗时、token 用量
+  - **Request** — 格式化 JSON body、message/tool 数量标签
+  - **Pretty** — 人类视角渲染：组装后的文本、thinking、tool calls
+  - **Raw** — 完全未处理的响应原文（原始 SSE 流或完整 JSON）
   - **Timing** — TTFB vs 流式传输比例条、token 生成速率
 
 ## 目录结构
@@ -106,8 +130,10 @@ src/
 │   ├── App.css            # 全局样式（Catppuccin Mocha）
 │   ├── hooks/
 │   │   └── useTraces.ts   # WebSocket hook，自动重连
+│   ├── utils/
+│   │   └── agentRole.ts   # Qwen Code agent 角色识别（system prompt → role）
 │   └── components/
-│       ├── Sidebar.tsx    # 请求列表
+│       ├── Sidebar.tsx    # 请求列表（带角色徽章）
 │       └── DetailPanel.tsx # 5 Tab 详情视图
 └── types.ts               # 共享类型（TraceEntry、TraceEvent 等）
 ```
