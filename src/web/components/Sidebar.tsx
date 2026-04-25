@@ -1,15 +1,18 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import type { TraceEntry } from '../../types';
+import { getAgentRoleMeta } from '../utils/agentRole';
 
 // ── Color palette (dark theme) ──────────────────────────────────
 
 const colors = {
   bg: '#1e1e2e',
-  selectedBg: '#313244',
-  hoverBg: '#282838',
+  selectedBg: '#2a2a3c',
+  selectedAccent: '#89b4fa',
+  hoverBg: 'rgba(205, 214, 244, 0.04)',
   text: '#cdd6f4',
+  subtext: '#a6adc8',
   muted: '#6c7086',
-  border: '#313244',
+  border: '#2a2a3c',
   statusGreen: '#a6e3a1',
   statusRed: '#f38ba8',
   statusGray: '#6c7086',
@@ -35,6 +38,20 @@ function formatTokens(count: number): string {
     return `${(count / 1000).toFixed(1)}K`;
   }
   return String(count);
+}
+
+/**
+ * Compose a hex color with an alpha channel suffix.
+ * The role chip uses ~12% fill and ~25% border tint to stay quiet against
+ * the dark background while still reading as "this row is X kind of call".
+ */
+function hexWithAlpha(hex: string, alpha: number): string {
+  // Clamp to [0, 1] then map to a two-digit hex byte.
+  const a = Math.max(0, Math.min(1, alpha));
+  const byte = Math.round(a * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `${hex}${byte}`;
 }
 
 function statusColor(status: number): string {
@@ -76,8 +93,13 @@ interface RowProps {
 const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) => {
   const [hovered, setHovered] = useState(false);
 
+  // Detect *which* Qwen Code agent is responsible for this call. The role
+  // is far more informative than the model name in a dense list, so we
+  // surface it as a colored chip immediately after the index.
+  const role = getAgentRoleMeta(trace);
+
   const model = trace.requestBody?.model
-    ? truncate(trace.requestBody.model, 20)
+    ? truncate(trace.requestBody.model, 18)
     : '\u2014';
 
   const totalTokens = trace.assembled?.usage?.totalTokens;
@@ -94,34 +116,57 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
     <div
       role="button"
       tabIndex={0}
+      aria-selected={isSelected}
       onClick={() => onSelect(trace.id)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') onSelect(trace.id);
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(trace.id);
+        }
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '8px 12px',
+        padding: '9px 12px 9px 14px',
         cursor: 'pointer',
         backgroundColor: bg,
         borderBottom: `1px solid ${colors.border}`,
-        transition: 'background-color 0.1s ease',
+        transition: 'background-color 120ms ease',
         userSelect: 'none',
-        outline: 'none',
       }}
     >
+      {/* Selection accent stripe — the only place accent appears in the sidebar.
+          Sits flush to the left edge so the eye locks onto the active row. */}
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 2,
+          background: isSelected ? colors.selectedAccent : 'transparent',
+          transition: 'background 150ms ease',
+        }}
+      />
+
       {/* State dot */}
       <span
         style={{
-          width: 8,
-          height: 8,
-          minWidth: 8,
+          width: 7,
+          height: 7,
+          minWidth: 7,
           borderRadius: '50%',
           backgroundColor: stateDotColor(trace.state),
           flexShrink: 0,
+          boxShadow:
+            trace.state === 'streaming'
+              ? `0 0 6px ${stateDotColor(trace.state)}`
+              : 'none',
           ...(trace.state === 'streaming'
             ? { animation: 'qwtrace-pulse 1.4s ease-in-out infinite' }
             : {}),
@@ -130,25 +175,58 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
 
       {/* Index */}
       <span
+        className="qt-mono"
         style={{
           color: colors.muted,
-          fontSize: 11,
-          fontFamily: 'monospace',
-          minWidth: 28,
+          fontSize: 10,
+          minWidth: 24,
           flexShrink: 0,
         }}
       >
-        #{index}
+        {String(index).padStart(2, '0')}
       </span>
 
-      {/* Model name */}
+      {/* Agent role chip — colored dot + short label. Tooltip carries the
+          full description so the chrome stays calm while still being
+          discoverable. The chip uses a tinted-fill bg matching the role
+          color at very low alpha — same hue as the sidebar accent system. */}
       <span
+        title={`${role.label} — ${role.description}`}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '2px 6px 2px 5px',
+          borderRadius: 4,
+          background: hexWithAlpha(role.color, 0.12),
+          border: `1px solid ${hexWithAlpha(role.color, 0.25)}`,
+          color: role.color,
+          fontSize: 10,
+          lineHeight: 1.2,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+          flexShrink: 0,
+          maxWidth: 124,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 9, opacity: 0.9 }}>
+          {role.symbol}
+        </span>
+        {role.shortLabel}
+      </span>
+
+      {/* Model name — secondary, muted further now that the role chip carries
+          the primary identity signal. */}
+      <span
+        className="qt-mono"
         style={{
           flex: 1,
-          color: colors.text,
-          fontSize: 13,
-          fontFamily:
-            "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace",
+          color: isSelected ? colors.subtext : colors.muted,
+          fontSize: 11,
+          fontWeight: isSelected ? 500 : 400,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -159,10 +237,10 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
 
       {/* Status code */}
       <span
+        className="qt-mono"
         style={{
           color: statusColor(trace.status),
-          fontSize: 12,
-          fontFamily: 'monospace',
+          fontSize: 11,
           fontWeight: 600,
           minWidth: 28,
           textAlign: 'right',
@@ -174,11 +252,11 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
 
       {/* Duration */}
       <span
+        className="qt-mono"
         style={{
           color: colors.muted,
-          fontSize: 11,
-          fontFamily: 'monospace',
-          minWidth: 42,
+          fontSize: 10,
+          minWidth: 44,
           textAlign: 'right',
           flexShrink: 0,
         }}
@@ -188,10 +266,10 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
 
       {/* Tokens */}
       <span
+        className="qt-mono"
         style={{
-          color: totalTokens ? colors.text : colors.muted,
-          fontSize: 11,
-          fontFamily: 'monospace',
+          color: totalTokens ? colors.subtext : colors.muted,
+          fontSize: 10,
           minWidth: 38,
           textAlign: 'right',
           flexShrink: 0,
@@ -245,22 +323,33 @@ const Sidebar: React.FC<SidebarProps> = ({ traces, selectedId, onSelect }) => {
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
-      {/* Header */}
+      {/* Header — eyebrow caps + tabular count, matches the rest of the chrome */}
       <div
         style={{
-          padding: '12px 12px 8px',
+          padding: '14px 14px 10px',
           borderBottom: `1px solid ${colors.border}`,
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'baseline',
           justifyContent: 'space-between',
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: 0.3 }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: '0.14em',
+            color: colors.subtext,
+          }}
+        >
           Requests
         </span>
-        <span style={{ fontSize: 11, color: colors.muted }}>
-          {traces.length}
+        <span
+          className="qt-mono"
+          style={{ fontSize: 10, color: colors.muted }}
+        >
+          {String(traces.length).padStart(3, '0')}
         </span>
       </div>
 
@@ -277,13 +366,36 @@ const Sidebar: React.FC<SidebarProps> = ({ traces, selectedId, onSelect }) => {
         {traces.length === 0 && (
           <div
             style={{
-              padding: 24,
+              padding: '40px 24px',
               textAlign: 'center',
               color: colors.muted,
-              fontSize: 13,
+              fontSize: 12,
+              lineHeight: 1.6,
             }}
           >
-            No requests captured yet.
+            <div
+              aria-hidden
+              style={{
+                width: 36,
+                height: 36,
+                margin: '0 auto 14px',
+                borderRadius: 10,
+                border: `1px dashed ${colors.border}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: colors.muted,
+                fontSize: 16,
+              }}
+            >
+              ◌
+            </div>
+            <div style={{ color: colors.subtext, fontSize: 12, marginBottom: 4 }}>
+              Waiting for traffic
+            </div>
+            <div style={{ fontSize: 11 }}>
+              Run Qwen Code with the trace hook enabled — captured requests will appear here in real time.
+            </div>
           </div>
         )}
 

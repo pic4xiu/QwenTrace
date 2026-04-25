@@ -1,32 +1,48 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { TraceEntry, ParsedSSEChunk } from '../../types';
+import { getAgentRoleMeta } from '../utils/agentRole';
 
 // ── Color tokens ──────────────────────────────────────────────
+// Catppuccin Mocha base, deliberately scoped:
+//   - `accent` is the ONLY blue and is reserved for active/focused/CTA states
+//   - section titles, table keys, and metadata use neutral subtext, not accent
+//   - shadows are tinted to the canvas (`#1e1e2e`) instead of generic black
 const C = {
   bg: '#1e1e2e',
+  surface: '#232334',     // raised one step above bg, for cards
+  surfaceAlt: '#262638',  // raised two steps, for expanded states
   tabBar: '#181825',
-  tabActive: '#313244',
-  tabActiveText: '#89b4fa',
+  tabActive: '#2a2a3c',
+  tabActiveText: '#cdd6f4',
   tabInactiveText: '#6c7086',
   text: '#cdd6f4',
   subtext: '#a6adc8',
-  codeBg: '#11111b',
-  border: '#313244',
+  codeBg: '#161622',
+  border: '#2a2a3c',
+  borderStrong: '#393952',
   accent: '#89b4fa',
+  accentDim: '#89b4fa22',
   dimText: '#585b70',
-  badgeBg: '#313244',
+  badgeBg: 'rgba(205, 214, 244, 0.06)',
+  badgeText: '#a6adc8',
   errorText: '#f38ba8',
   successText: '#a6e3a1',
   warningText: '#f9e2af',
+  toolText: '#fab387',    // peach for tool calls — distinct from warning
+  shadowSm: '0 1px 2px rgba(0, 0, 0, 0.25)',
+  shadowMd: '0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(11, 11, 18, 0.35)',
 } as const;
 
 type TabId = 'overview' | 'request' | 'response' | 'sse' | 'timing';
 
+// Tab semantics:
+//   - "Pretty"  → human-readable rendering (assembled thinking + text + tool calls)
+//   - "Raw"     → completely unprocessed response body (SSE stream verbatim, OR full JSON for non-SSE)
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'request', label: 'Request' },
-  { id: 'response', label: 'Response' },
-  { id: 'sse', label: 'SSE Stream' },
+  { id: 'response', label: 'Pretty' },
+  { id: 'sse', label: 'Raw' },
   { id: 'timing', label: 'Timing' },
 ];
 
@@ -65,18 +81,23 @@ function tryFormatJson(raw: string | null | undefined): string {
 
 // ── Sub-components ────────────────────────────────────────────
 
-function Badge({ children }: { children: React.ReactNode }) {
+function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'accent' }) {
+  // Default tone is neutral so badges don't fight the section title for attention.
+  // `accent` is reserved for badges that ARE the focal CTA hint (e.g. "JSONL").
+  const isAccent = tone === 'accent';
   return (
     <span
       style={{
         display: 'inline-block',
-        padding: '2px 8px',
-        borderRadius: 4,
-        background: C.badgeBg,
-        color: C.accent,
-        fontSize: 12,
+        padding: '1px 7px',
+        borderRadius: 3,
+        background: isAccent ? C.accentDim : C.badgeBg,
+        color: isAccent ? C.accent : C.badgeText,
+        fontSize: 10,
         fontWeight: 600,
+        letterSpacing: '0.04em',
         marginLeft: 8,
+        verticalAlign: 'middle',
       }}
     >
       {children}
@@ -84,11 +105,16 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function KVRow({ label, value, valueColor }: { label: string; value: React.ReactNode; valueColor?: string }) {
+function KVRow({ label, value, valueColor, mono }: { label: string; value: React.ReactNode; valueColor?: string; mono?: boolean }) {
   return (
-    <div style={{ display: 'flex', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-      <span style={{ width: 160, minWidth: 160, color: C.subtext, fontSize: 13 }}>{label}</span>
-      <span style={{ flex: 1, color: valueColor ?? C.text, fontSize: 13, wordBreak: 'break-all' }}>{value}</span>
+    <div style={{ display: 'flex', padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
+      <span style={{ width: 160, minWidth: 160, color: C.subtext, fontSize: 12 }}>{label}</span>
+      <span
+        className={mono ? 'qt-mono' : 'qt-num'}
+        style={{ flex: 1, color: valueColor ?? C.text, fontSize: 13, wordBreak: 'break-all' }}
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -99,13 +125,14 @@ function CodeBlock({ children }: { children: string }) {
       style={{
         background: C.codeBg,
         color: C.text,
-        padding: 12,
-        borderRadius: 6,
+        padding: '12px 14px',
+        borderRadius: 8,
+        border: `1px solid ${C.border}`,
         fontSize: 12,
-        lineHeight: 1.5,
+        lineHeight: 1.55,
         overflow: 'auto',
         maxHeight: 500,
-        margin: '8px 0',
+        margin: '6px 0',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
       }}
@@ -116,15 +143,20 @@ function CodeBlock({ children }: { children: string }) {
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
+  // Eyebrow-style: small, neutral, all-caps with strong tracking.
+  // The accent color is no longer the default for headings — it's reserved for active states.
   return (
     <h3
       style={{
-        color: C.accent,
-        fontSize: 14,
+        color: C.subtext,
+        fontSize: 11,
         fontWeight: 600,
-        margin: '16px 0 8px',
+        margin: '20px 0 10px',
         textTransform: 'uppercase',
-        letterSpacing: '0.05em',
+        letterSpacing: '0.12em',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
       }}
     >
       {children}
@@ -146,123 +178,216 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
+  // Pill-shaped button with an inline glyph + label. Active/focus styles
+  // come from App.css globals.
   return (
     <button
       onClick={handleCopy}
+      title={copied ? 'Copied to clipboard' : 'Copy to clipboard'}
       style={{
-        background: copied ? '#a6e3a122' : 'transparent',
-        border: `1px solid ${copied ? '#a6e3a1' : C.border}`,
-        color: copied ? '#a6e3a1' : C.subtext,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        background: copied ? 'rgba(166, 227, 161, 0.12)' : 'transparent',
+        border: `1px solid ${copied ? C.successText : C.border}`,
+        color: copied ? C.successText : C.subtext,
         fontSize: 11,
-        padding: '2px 8px',
-        borderRadius: 4,
+        padding: '3px 10px 3px 8px',
+        borderRadius: 999,
         cursor: 'pointer',
-        transition: 'all 0.15s',
-        fontFamily: 'inherit',
         marginLeft: 8,
         whiteSpace: 'nowrap',
       }}
     >
-      {copied ? 'Copied!' : (label || 'Copy')}
+      <span aria-hidden style={{ fontSize: 12, lineHeight: 1, opacity: 0.85 }}>
+        {copied ? '✓' : '⎘'}
+      </span>
+      {copied ? 'Copied' : (label || 'Copy')}
     </button>
   );
 }
 
-function HeaderTable({ headers }: { headers: Record<string, string> }) {
-  const entries = Object.entries(headers);
-  if (entries.length === 0) {
-    return <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No headers</div>;
-  }
-  return (
-    <div style={{ fontSize: 13 }}>
-      {entries.map(([k, v]) => (
-        <div
-          key={k}
-          style={{
-            display: 'flex',
-            padding: '4px 0',
-            borderBottom: `1px solid ${C.border}`,
-          }}
-        >
-          <span style={{ width: 220, minWidth: 220, color: C.accent, fontFamily: 'monospace', fontSize: 12 }}>
-            {k}
-          </span>
-          <span style={{ flex: 1, color: C.text, wordBreak: 'break-all', fontFamily: 'monospace', fontSize: 12 }}>
-            {v}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
+// HeaderTable was removed in 2026-04. Rationale documented at the two former
+// call sites (RequestTab / ResponseTab). TL;DR: Qwen Code never reads response
+// headers in its model interaction pipeline, so they were UI noise and a
+// security risk (bearer token leaked through JSON export).
 
 // ── Tab content ───────────────────────────────────────────────
 
+function StateBadge({ state }: { state: TraceEntry['state'] }) {
+  // Compact dot + sentence-case label, replacing the raw 'streaming' string.
+  const labels: Record<TraceEntry['state'], string> = {
+    pending: 'Pending',
+    streaming: 'Streaming',
+    complete: 'Complete',
+    error: 'Failed',
+  };
+  const color = stateColor(state);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color }}>
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: color,
+          boxShadow: state === 'streaming' ? `0 0 6px ${color}` : 'none',
+          animation: state === 'streaming' ? 'pulse 1.4s ease-in-out infinite' : undefined,
+        }}
+      />
+      {labels[state]}
+    </span>
+  );
+}
+
 function OverviewTab({ trace }: { trace: TraceEntry }) {
   const usage = trace.assembled?.usage;
+  // Identify which Qwen Code agent originated this call. The Overview tab
+  // is the "who/what/when" page, so the role belongs at the very top — it
+  // answers the question users ask first when scanning a trace.
+  const role = getAgentRoleMeta(trace);
+
+  // Token usage as 4 stat tiles arranged 4-up on wide screens, dropping to 2-up on narrow.
+  // Style is "data divider" rather than "card with shadow + border" — driven by `border-top`
+  // accent stripe and large mono numerals, per the dashboard-hardening rule from the skill.
+  const tokenStats = usage
+    ? [
+        { key: 'prompt', label: 'Prompt', value: usage.promptTokens, accent: false },
+        { key: 'completion', label: 'Completion', value: usage.completionTokens, accent: true },
+        { key: 'cached', label: 'Cached', value: usage.cachedTokens, accent: false },
+        { key: 'total', label: 'Total', value: usage.totalTokens, accent: false },
+      ]
+    : [];
+
   return (
     <div>
+      {/* Agent role identity card — prominent because "which agent is this?"
+          is the most useful single question when triaging Qwen Code traffic.
+          Uses the role's signature color as a left border stripe (concentric
+          with the surface fill), keeping the page calm but unmistakable. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 14,
+          padding: '14px 16px',
+          marginBottom: 18,
+          background: C.surface,
+          borderRadius: 10,
+          borderLeft: `3px solid ${role.color}`,
+          boxShadow: C.shadowSm,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 36,
+            height: 36,
+            flexShrink: 0,
+            borderRadius: 8,
+            background: `${role.color}1f`, // ~12% alpha tinted fill
+            color: role.color,
+            fontSize: 18,
+            lineHeight: 1,
+          }}
+        >
+          {role.symbol}
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="qt-eyebrow" style={{ marginBottom: 4 }}>
+            Agent role
+          </div>
+          <div
+            style={{
+              color: C.text,
+              fontSize: 14,
+              fontWeight: 600,
+              letterSpacing: '-0.01em',
+              lineHeight: 1.25,
+            }}
+          >
+            {role.label}
+          </div>
+          <div
+            style={{
+              color: C.dimText,
+              fontSize: 12,
+              lineHeight: 1.55,
+              marginTop: 4,
+              maxWidth: 560,
+            }}
+          >
+            {role.description}
+          </div>
+        </div>
+      </div>
+
       <SectionTitle>Request</SectionTitle>
-      <KVRow label="URL" value={trace.url} />
-      <KVRow label="Method" value={trace.method} />
+      <KVRow label="URL" value={trace.url} mono />
+      <KVRow label="Method" value={trace.method} mono />
       <KVRow
         label="Status"
-        value={trace.status ? `${trace.status} ${trace.statusText}` : '--'}
+        value={trace.status ? `${trace.status} ${trace.statusText}` : '—'}
         valueColor={trace.status ? statusColor(trace.status) : undefined}
+        mono
       />
-      <KVRow label="Model" value={trace.assembled?.model || trace.requestBody?.model || '--'} />
+      <KVRow label="Model" value={trace.assembled?.model || trace.requestBody?.model || '—'} mono />
 
       <SectionTitle>Timing</SectionTitle>
       <KVRow label="Duration" value={fmtMs(trace.duration)} />
       <KVRow label="TTFB" value={fmtMs(trace.ttfb)} />
 
-      <SectionTitle>Token Usage</SectionTitle>
+      <SectionTitle>Token usage</SectionTitle>
       {usage ? (
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: 8,
-            marginTop: 8,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 10,
+            marginTop: 6,
           }}
         >
-          {[
-            { label: 'Prompt', value: usage.promptTokens },
-            { label: 'Completion', value: usage.completionTokens },
-            { label: 'Cached', value: usage.cachedTokens },
-            { label: 'Total', value: usage.totalTokens },
-          ].map((item) => (
+          {tokenStats.map((item) => (
             <div
-              key={item.label}
+              key={item.key}
               style={{
-                background: C.codeBg,
-                borderRadius: 6,
-                padding: '10px 14px',
-                border: `1px solid ${C.border}`,
+                background: C.surface,
+                borderRadius: 10,
+                padding: '12px 14px 14px',
+                borderTop: `2px solid ${item.accent ? C.accent : C.borderStrong}`,
+                boxShadow: C.shadowSm,
               }}
             >
-              <div style={{ color: C.subtext, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {item.label}
-              </div>
-              <div style={{ color: C.text, fontSize: 18, fontWeight: 700, marginTop: 2 }}>
-                {item.value != null ? item.value.toLocaleString() : '--'}
+              <div className="qt-eyebrow">{item.label}</div>
+              <div
+                className="qt-mono"
+                style={{
+                  color: C.text,
+                  fontSize: 22,
+                  fontWeight: 600,
+                  marginTop: 4,
+                  letterSpacing: '-0.01em',
+                  lineHeight: 1.1,
+                }}
+              >
+                {item.value != null ? item.value.toLocaleString() : '—'}
               </div>
             </div>
           ))}
         </div>
       ) : (
-        <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No token usage data</div>
+        <div style={{ color: C.dimText, fontSize: 12, padding: '8px 0' }}>No token usage reported.</div>
       )}
 
       <SectionTitle>Status</SectionTitle>
+      <KVRow label="State" value={<StateBadge state={trace.state} />} />
       <KVRow
-        label="Finish Reason"
-        value={trace.assembled?.finishReason || '--'}
-      />
-      <KVRow
-        label="State"
-        value={trace.state}
-        valueColor={stateColor(trace.state)}
+        label="Finish reason"
+        value={trace.assembled?.finishReason || '—'}
+        mono
       />
       {trace.error && <KVRow label="Error" value={trace.error} valueColor={C.errorText} />}
     </div>
@@ -282,12 +407,12 @@ function RequestTab({ trace }: { trace: TraceEntry }) {
 
   return (
     <div>
-      <SectionTitle>Request Headers</SectionTitle>
-      <HeaderTable headers={trace.requestHeaders ?? {}} />
-
-      <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+      {/* Headers intentionally hidden — Qwen Code uses only request body for
+          model interaction. Headers are SDK metadata + bearer token (security
+          risk in exports). See git log 2026-04 for full rationale. */}
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
         <SectionTitle>
-          Request Body
+          Request body
           {messagesCount > 0 && <Badge>{messagesCount} message{messagesCount !== 1 ? 's' : ''}</Badge>}
           {toolsCount > 0 && <Badge>{toolsCount} tool{toolsCount !== 1 ? 's' : ''}</Badge>}
         </SectionTitle>
@@ -296,120 +421,212 @@ function RequestTab({ trace }: { trace: TraceEntry }) {
       {bodyText ? (
         <CodeBlock>{bodyText}</CodeBlock>
       ) : (
-        <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No request body</div>
+        <div style={{ color: C.dimText, fontSize: 12, padding: '8px 0' }}>No request body.</div>
       )}
     </div>
   );
 }
 
+/**
+ * ResponseTab — Pretty View.
+ *
+ * Shows the *human-readable* rendering of the response, regardless of whether
+ * the underlying transport was SSE or a single JSON payload. The server
+ * normalises both shapes into `trace.assembled`, so this tab only ever has to
+ * deal with one data structure: thinking → text → tool calls → usage.
+ *
+ * Anything raw (the byte-for-byte response body) lives in the "Raw" tab.
+ */
 function ResponseTab({ trace }: { trace: TraceEntry }) {
   const assembled = trace.assembled;
   const isSSE = trace.isSSE || (trace.chunks?.length ?? 0) > 0;
-  const jsonl = isSSE ? buildJsonl(trace.chunks ?? []) : '';
-  const jsonlChunkCount = isSSE
-    ? (trace.chunks ?? []).filter((c) => c.raw !== '[DONE]' && c.raw.trim()).length
-    : 0;
 
-  // Build the full copyable response text
+  // Aggregate every renderable section into a single "Copy all" payload.
   const buildFullResponse = (): string => {
+    if (!assembled) return '';
     const parts: string[] = [];
-    if (assembled) {
-      if (assembled.fullText) parts.push(assembled.fullText);
-      if (assembled.thinkingText) parts.push(`[Thinking]\n${assembled.thinkingText}`);
-      if (assembled.toolCalls.length > 0) {
-        parts.push(`[Tool Calls]\n${JSON.stringify(assembled.toolCalls, null, 2)}`);
-      }
-    } else if (trace.responseBody) {
-      parts.push(tryFormatJson(trace.responseBody));
+    if (assembled.thinkingText) parts.push(`[Thinking]\n${assembled.thinkingText}`);
+    if (assembled.fullText) parts.push(assembled.fullText);
+    if (assembled.toolCalls.length > 0) {
+      parts.push(`[Tool Calls]\n${JSON.stringify(assembled.toolCalls, null, 2)}`);
     }
     return parts.join('\n\n');
   };
 
+  const hasAnyContent = !!(
+    assembled &&
+    (assembled.fullText || assembled.thinkingText || assembled.toolCalls.length > 0)
+  );
+
   return (
     <div>
-      {/* Response Headers */}
-      <SectionTitle>Response Headers</SectionTitle>
-      {Object.keys(trace.responseHeaders ?? {}).length > 0 ? (
-        <HeaderTable headers={trace.responseHeaders} />
-      ) : (
-        <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No response headers</div>
-      )}
+      {/* Headers intentionally hidden — Qwen Code's pipeline only consumes the
+          response body (verified in qwen-code/packages/core/src/core/openaiContentGenerator/).
+          The OpenAI SDK decides SSE vs JSON from the request `stream` flag, not
+          from response Content-Type, so showing 17 transport headers per trace
+          was pure noise. */}
+      <div
+        style={{
+          padding: '8px 12px',
+          fontSize: 11,
+          color: C.dimText,
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          lineHeight: 1.55,
+          marginBottom: 4,
+        }}
+      >
+        Parsed, human-friendly view. For the unmodified {isSSE ? 'SSE stream' : 'JSON body'},
+        switch to the <strong style={{ color: C.text }}>Raw</strong> tab.
+      </div>
 
-      {/* Quick copy actions for SSE — full raw stream as JSONL */}
-      {isSSE && jsonlChunkCount > 0 && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
-            <SectionTitle>
-              Raw SSE Stream
-              <Badge>JSONL</Badge>
-            </SectionTitle>
-            <CopyButton text={jsonl} label={`Copy as JSONL (${jsonlChunkCount})`} />
-          </div>
-          <div
-            style={{
-              fontSize: 11,
-              color: C.dimText,
-              marginBottom: 8,
-              lineHeight: 1.5,
-            }}
-          >
-            Each line is one OpenAI <code style={{ color: C.subtext }}>ChatCompletionChunk</code>. The trailing
-            <code style={{ color: C.subtext }}> [DONE]</code> sentinel is excluded so the output is valid JSONL.
-            Switch to the <strong style={{ color: C.subtext }}>SSE Stream</strong> tab to inspect chunks individually.
-          </div>
-        </>
-      )}
-
-      {/* Response Body */}
+      {/* Assembled rendering */}
       {assembled ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
-            <SectionTitle>Assembled Response</SectionTitle>
-            {(assembled.fullText || assembled.toolCalls.length > 0) && (
-              <CopyButton text={buildFullResponse()} label="Copy All" />
-            )}
-          </div>
-          {assembled.fullText ? (
-            <CodeBlock>{assembled.fullText}</CodeBlock>
-          ) : (
-            <div style={{ color: C.dimText, fontSize: 13, padding: '8px 0' }}>No text content</div>
-          )}
-
-          {assembled.thinkingText ? (
+          {/* Thinking — rendered first because reasoning precedes the answer */}
+          {assembled.thinkingText && (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
-                <SectionTitle>Thinking</SectionTitle>
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
+                <SectionTitle>
+                  Thinking
+                  <Badge>reasoning</Badge>
+                </SectionTitle>
                 <CopyButton text={assembled.thinkingText} />
               </div>
               <CodeBlock>{assembled.thinkingText}</CodeBlock>
             </>
-          ) : null}
+          )}
 
-          {assembled.toolCalls.length > 0 && (
+          {/* Final text content */}
+          {assembled.fullText && (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
-                <SectionTitle>Tool Calls ({assembled.toolCalls.length})</SectionTitle>
-                <CopyButton text={JSON.stringify(assembled.toolCalls, null, 2)} />
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
+                <SectionTitle>Content</SectionTitle>
+                <CopyButton text={assembled.fullText} />
               </div>
-              <CodeBlock>{JSON.stringify(assembled.toolCalls, null, 2)}</CodeBlock>
+              <CodeBlock>{assembled.fullText}</CodeBlock>
             </>
           )}
-        </>
-      ) : trace.responseBody ? (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
-            <SectionTitle>
-              Response Body
-              <Badge>non-streaming</Badge>
-            </SectionTitle>
-            <CopyButton text={tryFormatJson(trace.responseBody)} />
-          </div>
-          <div style={{ fontSize: 11, color: C.dimText, marginBottom: 8 }}>
-            This response did not use SSE streaming — likely a <code style={{ color: C.subtext }}>/v1/models</code>,
-            <code style={{ color: C.subtext }}> /v1/embeddings</code>, a <code style={{ color: C.subtext }}>stream:false </code>
-            request, or a non-streaming error payload.
-          </div>
-          <CodeBlock>{tryFormatJson(trace.responseBody)}</CodeBlock>
+
+          {/* Tool calls — pretty-print arguments JSON when possible */}
+          {assembled.toolCalls.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
+                <SectionTitle>Tool calls ({assembled.toolCalls.length})</SectionTitle>
+                <CopyButton text={JSON.stringify(assembled.toolCalls, null, 2)} />
+              </div>
+              {assembled.toolCalls.map((tc, i) => (
+                <div
+                  key={`${tc.id || 'tc'}-${i}`}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    marginBottom: 8,
+                    boxShadow: C.shadowSm,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 10,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span
+                      className="qt-mono"
+                      style={{ color: C.toolText, fontSize: 12, fontWeight: 600 }}
+                    >
+                      {tc.name || '(unnamed)'}
+                    </span>
+                    {tc.id && (
+                      <span className="qt-mono" style={{ color: C.dimText, fontSize: 10 }}>
+                        {tc.id}
+                      </span>
+                    )}
+                  </div>
+                  <pre
+                    style={{
+                      background: C.codeBg,
+                      color: C.text,
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      lineHeight: 1.55,
+                      margin: 0,
+                      overflow: 'auto',
+                      maxHeight: 320,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    <code>{tryFormatJson(tc.arguments || '{}')}</code>
+                  </pre>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* Usage summary — surfaces the token counts inline so this tab is self-contained */}
+          {assembled.usage && (assembled.usage.totalTokens > 0 || assembled.usage.promptTokens > 0) && (
+            <>
+              <SectionTitle>Usage</SectionTitle>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 18,
+                  fontSize: 12,
+                  color: C.subtext,
+                  padding: '6px 0 4px',
+                }}
+              >
+                <span>
+                  <span className="qt-eyebrow" style={{ marginRight: 6 }}>Prompt</span>
+                  <span className="qt-mono" style={{ color: C.text }}>
+                    {assembled.usage.promptTokens.toLocaleString()}
+                  </span>
+                </span>
+                <span>
+                  <span className="qt-eyebrow" style={{ marginRight: 6 }}>Completion</span>
+                  <span className="qt-mono" style={{ color: C.text }}>
+                    {assembled.usage.completionTokens.toLocaleString()}
+                  </span>
+                </span>
+                <span>
+                  <span className="qt-eyebrow" style={{ marginRight: 6 }}>Total</span>
+                  <span className="qt-mono" style={{ color: C.text }}>
+                    {assembled.usage.totalTokens.toLocaleString()}
+                  </span>
+                </span>
+                {assembled.finishReason && (
+                  <span>
+                    <span className="qt-eyebrow" style={{ marginRight: 6 }}>Finish</span>
+                    <span className="qt-mono" style={{ color: C.text }}>
+                      {assembled.finishReason}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Sticky "Copy all" footer when there's anything worth copying */}
+          {hasAnyContent && (
+            <div style={{ marginTop: 18, display: 'flex', justifyContent: 'flex-end' }}>
+              <CopyButton text={buildFullResponse()} label="Copy all" />
+            </div>
+          )}
+
+          {/* True empty state — assembled exists but is entirely blank */}
+          {!hasAnyContent && (
+            <div style={{ color: C.dimText, fontSize: 12, padding: '14px 0' }}>
+              The response was received successfully but contained no text, thinking, or tool calls.
+            </div>
+          )}
         </>
       ) : (
         <div
@@ -417,12 +634,16 @@ function ResponseTab({ trace }: { trace: TraceEntry }) {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            height: 200,
+            flexDirection: 'column',
+            gap: 8,
+            padding: '40px 20px',
             color: C.dimText,
-            fontSize: 14,
+            fontSize: 12,
+            textAlign: 'center',
           }}
         >
-          No response data
+          <div style={{ color: C.subtext, fontSize: 13 }}>No response yet</div>
+          <div>Once the request completes, the parsed response will appear here.</div>
         </div>
       )}
     </div>
@@ -501,31 +722,62 @@ function buildJsonl(chunks: ParsedSSEChunk[]): string {
   return lines.join('\n');
 }
 
-// ── SSE Stream tab ────────────────────────────────────────────
+/**
+ * Reconstruct the wire-format SSE stream from captured chunks.
+ * Each event is rendered as `data: <payload>\n\n` — exactly what
+ * the network would have delivered. The trailing `[DONE]` sentinel
+ * is preserved so the output is byte-identical to a real SSE response.
+ */
+function buildRawSseStream(chunks: ParsedSSEChunk[]): string {
+  const out: string[] = [];
+  for (const c of chunks) {
+    const payload = c.raw;
+    if (!payload) continue;
+    out.push(`data: ${payload}\n\n`);
+  }
+  return out.join('');
+}
+
+// ── Raw tab ───────────────────────────────────────────────────
+//
+// "Raw" is the byte-level view. Two transport shapes are supported:
+//
+//   1. SSE stream  → reconstruct the wire format `data: ...\n\n` from chunks.
+//                    Sub-views: Stream (raw text) / Chunks (cards) / JSONL.
+//   2. JSON body   → display the verbatim response body, no parsing applied.
+//
+// The Pretty tab takes care of human-friendly rendering; this tab is for
+// engineers who need to verify or replay the exact bytes the server sent.
+
+type RawView = 'stream' | 'chunks' | 'jsonl';
 
 function SSEStreamTab({ trace }: { trace: TraceEntry }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isStreaming = trace.state === 'streaming';
   const chunks = trace.chunks ?? [];
+  const isSSE = trace.isSSE || chunks.length > 0;
 
+  // Per-trace UI state — reset whenever the user picks a different request.
   const [filter, setFilter] = useState<FilterKind>('all');
   const [autoScroll, setAutoScroll] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [bulkExpand, setBulkExpand] = useState<'collapsed' | 'expanded'>('collapsed');
+  const [view, setView] = useState<RawView>('stream');
+  const [wrap, setWrap] = useState(true);
 
-  // Reset per-trace UI state
   useEffect(() => {
     setExpandedIds(new Set());
     setBulkExpand('collapsed');
     setFilter('all');
-  }, [trace.id]);
+    setView(isSSE ? 'stream' : 'stream');
+  }, [trace.id, isSSE]);
 
-  // Auto-scroll while streaming
+  // Auto-scroll while streaming (only meaningful in chunk view)
   useEffect(() => {
-    if (autoScroll && isStreaming && scrollRef.current) {
+    if (autoScroll && isStreaming && view === 'chunks' && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [chunks.length, isStreaming, autoScroll]);
+  }, [chunks.length, isStreaming, autoScroll, view]);
 
   const toggleChunk = useCallback((index: number) => {
     setExpandedIds((prev) => {
@@ -546,10 +798,89 @@ function SSEStreamTab({ trace }: { trace: TraceEntry }) {
     setExpandedIds(new Set());
   }, []);
 
-  const jsonl = buildJsonl(chunks);
-  const validJsonlCount = chunks.filter((c) => c.raw !== '[DONE]' && c.raw.trim()).length;
+  // ── Branch: non-SSE response ───────────────────────────────────
+  // Just dump the raw body. No filtering, no chunking, no transformation.
+  if (!isSSE) {
+    const body = trace.responseBody ?? '';
+    const hasBody = body.length > 0;
+    const looksLikeJson = hasBody && /^\s*[\{\[]/.test(body);
 
-  // Apply filter, but keep original index for display
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* Toolbar */}
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 0',
+            borderBottom: `1px solid ${C.border}`,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 12, color: C.subtext }}>
+            <Badge>non-streaming</Badge>
+            <span style={{ marginLeft: 8 }}>
+              <span className="qt-mono" style={{ color: C.text }}>
+                {body.length.toLocaleString()}
+              </span>{' '}
+              bytes
+            </span>
+          </span>
+          <span style={{ flex: 1 }} />
+          {hasBody && <CopyButton text={body} label="Copy raw body" />}
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '12px 0' }}>
+          {hasBody ? (
+            <pre
+              style={{
+                background: C.codeBg,
+                color: C.text,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: '14px 16px',
+                margin: 0,
+                fontSize: 12,
+                lineHeight: 1.55,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              <code>{body}</code>
+            </pre>
+          ) : (
+            <RawEmptyState
+              title="No response body captured"
+              detail="The server returned an empty body, or the body wasn't captured before the connection closed."
+            />
+          )}
+          {hasBody && looksLikeJson && (
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                color: C.dimText,
+                lineHeight: 1.55,
+              }}
+            >
+              This response is a single JSON document, not an SSE stream.
+              Switch to the <strong style={{ color: C.subtext }}>Pretty</strong> tab for parsed thinking, content, and tool calls.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Branch: SSE stream ─────────────────────────────────────────
+  const validJsonlCount = chunks.filter((c) => c.raw !== '[DONE]' && c.raw.trim()).length;
+  const rawStream = buildRawSseStream(chunks);
+  const jsonl = buildJsonl(chunks);
+
+  // Filter only applies to chunk view
   const visible = chunks
     .map((chunk, index) => ({ chunk, index, kind: classifyChunk(chunk) }))
     .filter(({ kind }) => matchesFilter(kind, filter));
@@ -558,7 +889,7 @@ function SSEStreamTab({ trace }: { trace: TraceEntry }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
 
-      {/* Toolbar */}
+      {/* Toolbar — primary row: counts + view selector */}
       <div
         style={{
           display: 'flex',
@@ -571,7 +902,9 @@ function SSEStreamTab({ trace }: { trace: TraceEntry }) {
         }}
       >
         <span style={{ fontSize: 12, color: C.subtext, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontWeight: 600, color: C.text }}>{chunks.length}</span>
+          <span className="qt-mono" style={{ fontWeight: 600, color: C.text }}>
+            {chunks.length}
+          </span>
           chunk{chunks.length !== 1 ? 's' : ''}
           {isStreaming && (
             <span
@@ -585,93 +918,157 @@ function SSEStreamTab({ trace }: { trace: TraceEntry }) {
               }}
             />
           )}
-          {filter !== 'all' && (
+          {view === 'chunks' && filter !== 'all' && (
             <span style={{ color: C.dimText }}>
-              · showing <span style={{ color: C.accent, fontWeight: 600 }}>{visible.length}</span>
+              · showing{' '}
+              <span className="qt-mono" style={{ color: C.text, fontWeight: 600 }}>
+                {visible.length}
+              </span>
             </span>
           )}
         </span>
 
         <span style={{ flex: 1 }} />
 
-        {/* Filter */}
+        {/* View selector — three byte-level perspectives */}
         <SegmentedControl
-          value={filter}
-          onChange={(v) => setFilter(v as FilterKind)}
+          value={view}
+          onChange={(v) => setView(v as RawView)}
           options={[
-            { id: 'all', label: 'All' },
-            { id: 'content', label: 'Content' },
-            { id: 'tool_call', label: 'Tools' },
-            { id: 'meta', label: 'Meta' },
+            { id: 'stream', label: 'Stream' },
+            { id: 'chunks', label: 'Chunks' },
+            { id: 'jsonl', label: 'JSONL' },
           ]}
         />
 
-        {/* Expand/Collapse */}
-        <ToolbarButton onClick={bulkExpand === 'expanded' ? collapseAll : expandAll}>
-          {bulkExpand === 'expanded' ? 'Collapse all' : 'Expand all'}
-        </ToolbarButton>
+        {/* Copy current view as a single text blob */}
+        {view === 'stream' && rawStream && (
+          <CopyButton text={rawStream} label="Copy stream" />
+        )}
+        {view === 'jsonl' && validJsonlCount > 0 && (
+          <CopyButton text={jsonl} label={`Copy JSONL (${validJsonlCount})`} />
+        )}
+      </div>
 
-        {/* Auto-scroll */}
-        <label
+      {/* Toolbar — secondary row: only meaningful in Chunks view */}
+      {view === 'chunks' && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 0',
+            borderBottom: `1px solid ${C.border}`,
+            flexShrink: 0,
+          }}
+        >
+          <SegmentedControl
+            value={filter}
+            onChange={(v) => setFilter(v as FilterKind)}
+            options={[
+              { id: 'all', label: 'All' },
+              { id: 'content', label: 'Content' },
+              { id: 'tool_call', label: 'Tools' },
+              { id: 'meta', label: 'Meta' },
+            ]}
+          />
+          <ToolbarButton onClick={bulkExpand === 'expanded' ? collapseAll : expandAll}>
+            {bulkExpand === 'expanded' ? 'Collapse all' : 'Expand all'}
+          </ToolbarButton>
+          <span style={{ flex: 1 }} />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 11,
+              color: C.subtext,
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={autoScroll}
+              onChange={(e) => setAutoScroll(e.target.checked)}
+              style={{ accentColor: C.accent, cursor: 'pointer' }}
+            />
+            Auto-scroll
+          </label>
+        </div>
+      )}
+
+      {/* Toolbar — wrap toggle for stream/jsonl text views */}
+      {(view === 'stream' || view === 'jsonl') && (
+        <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 4,
-            fontSize: 11,
-            color: C.subtext,
-            cursor: 'pointer',
-            userSelect: 'none',
+            gap: 8,
+            padding: '8px 0',
+            borderBottom: `1px solid ${C.border}`,
+            flexShrink: 0,
           }}
         >
-          <input
-            type="checkbox"
-            checked={autoScroll}
-            onChange={(e) => setAutoScroll(e.target.checked)}
-            style={{ accentColor: C.accent, cursor: 'pointer' }}
-          />
-          Auto-scroll
-        </label>
+          <span style={{ flex: 1 }} />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 11,
+              color: C.subtext,
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={wrap}
+              onChange={(e) => setWrap(e.target.checked)}
+              style={{ accentColor: C.accent, cursor: 'pointer' }}
+            />
+            Wrap lines
+          </label>
+        </div>
+      )}
 
-        {/* Copy as JSONL */}
-        {validJsonlCount > 0 && <CopyButton text={jsonl} label={`Copy as JSONL (${validJsonlCount})`} />}
-      </div>
-
-      {/* Chunk list */}
+      {/* Body */}
       <div
         ref={scrollRef}
         style={{
           flex: 1,
           overflow: 'auto',
           minHeight: 0,
-          padding: '8px 0',
+          padding: '12px 0',
         }}
       >
         {chunks.length === 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: 200,
-              color: C.dimText,
-              fontSize: 14,
-            }}
-          >
-            {isStreaming ? 'Waiting for chunks...' : 'No SSE chunks'}
-          </div>
+          <RawEmptyState
+            title={isStreaming ? 'Waiting for the first chunk…' : 'No SSE chunks captured'}
+            detail={
+              isStreaming
+                ? 'The connection is open but the server has not yet sent any data.'
+                : 'The request did not produce any streaming chunks.'
+            }
+          />
+        ) : view === 'stream' ? (
+          <RawTextBlock text={rawStream} wrap={wrap} />
+        ) : view === 'jsonl' ? (
+          validJsonlCount > 0 ? (
+            <RawTextBlock text={jsonl} wrap={wrap} />
+          ) : (
+            <RawEmptyState
+              title="No JSON-L content"
+              detail="None of the captured chunks contained a parseable JSON payload."
+            />
+          )
         ) : visible.length === 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: 120,
-              color: C.dimText,
-              fontSize: 13,
-            }}
-          >
-            No chunks match the current filter.
-          </div>
+          <RawEmptyState
+            title="No chunks match the current filter"
+            detail="Try a different filter, or switch back to All."
+          />
         ) : (
           visible.map(({ chunk, index, kind }) => (
             <ChunkCard
@@ -689,6 +1086,70 @@ function SSEStreamTab({ trace }: { trace: TraceEntry }) {
   );
 }
 
+// ── Raw view helpers ──────────────────────────────────────────
+
+/** Single dark code block for raw stream / JSONL views. */
+function RawTextBlock({ text, wrap }: { text: string; wrap: boolean }) {
+  return (
+    <pre
+      style={{
+        background: C.codeBg,
+        color: C.text,
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
+        padding: '14px 16px',
+        margin: 0,
+        fontSize: 12,
+        lineHeight: 1.55,
+        whiteSpace: wrap ? 'pre-wrap' : 'pre',
+        wordBreak: wrap ? 'break-word' : 'normal',
+        overflow: 'auto',
+      }}
+    >
+      <code>{text}</code>
+    </pre>
+  );
+}
+
+/** Composed empty state used across all Raw view branches. */
+function RawEmptyState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        padding: '40px 20px',
+        color: C.dimText,
+        fontSize: 12,
+        textAlign: 'center',
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          border: `1px dashed ${C.border}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: C.dimText,
+          fontSize: 16,
+          marginBottom: 6,
+        }}
+      >
+        ◌
+      </div>
+      <div style={{ color: C.subtext, fontSize: 13 }}>{title}</div>
+      <div style={{ maxWidth: 360, lineHeight: 1.55 }}>{detail}</div>
+    </div>
+  );
+}
+
 function ToolbarButton({
   children,
   onClick,
@@ -702,16 +1163,14 @@ function ToolbarButton({
     <button
       onClick={onClick}
       style={{
-        background: active ? C.tabActive : 'transparent',
-        border: `1px solid ${active ? C.accent : C.border}`,
-        color: active ? C.accent : C.subtext,
+        background: active ? C.surface : 'transparent',
+        border: `1px solid ${active ? C.borderStrong : C.border}`,
+        color: active ? C.text : C.subtext,
         fontSize: 11,
-        padding: '2px 8px',
-        borderRadius: 4,
+        padding: '3px 10px',
+        borderRadius: 999,
         cursor: 'pointer',
-        fontFamily: 'inherit',
         whiteSpace: 'nowrap',
-        transition: 'all 0.15s',
       }}
     >
       {children}
@@ -728,32 +1187,37 @@ function SegmentedControl<T extends string>({
   onChange: (v: T) => void;
   options: { id: T; label: string }[];
 }) {
+  // Pill-style segmented control. The active segment uses the surface color
+  // (subtle elevation) rather than a colored fill, so the accent stays scarce.
   return (
     <div
+      role="tablist"
       style={{
         display: 'inline-flex',
+        background: 'rgba(0, 0, 0, 0.18)',
         border: `1px solid ${C.border}`,
-        borderRadius: 4,
-        overflow: 'hidden',
+        borderRadius: 999,
+        padding: 2,
       }}
     >
-      {options.map((opt, i) => {
+      {options.map((opt) => {
         const active = opt.id === value;
         return (
           <button
             key={opt.id}
+            role="tab"
+            aria-selected={active}
             onClick={() => onChange(opt.id)}
             style={{
-              background: active ? C.tabActive : 'transparent',
-              color: active ? C.accent : C.subtext,
+              background: active ? C.surface : 'transparent',
+              color: active ? C.text : C.subtext,
               border: 'none',
-              borderLeft: i === 0 ? 'none' : `1px solid ${C.border}`,
               fontSize: 11,
-              padding: '2px 10px',
+              padding: '2px 12px',
+              borderRadius: 999,
               cursor: 'pointer',
-              fontFamily: 'inherit',
               fontWeight: active ? 600 : 400,
-              transition: 'all 0.15s',
+              boxShadow: active ? C.shadowSm : 'none',
             }}
           >
             {opt.label}
@@ -794,30 +1258,34 @@ function ChunkCard({
           alignItems: 'center',
           gap: 10,
           padding: '6px 10px',
-          margin: '4px 0',
-          fontSize: 11,
+          margin: '6px 0',
+          fontSize: 10,
           color: C.dimText,
-          fontFamily: 'monospace',
-          background: 'transparent',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
           borderTop: `1px dashed ${C.border}`,
           borderBottom: `1px dashed ${C.border}`,
         }}
       >
-        <span style={{ width: 36, textAlign: 'right' }}>{index}</span>
-        <span style={{ color: C.accent, width: 72 }}>+{Math.round(chunk.elapsed)}ms</span>
-        <span style={{ flex: 1 }}>──── [DONE] ────</span>
+        <span className="qt-mono" style={{ width: 36, textAlign: 'right', textTransform: 'none' }}>#{index}</span>
+        <span className="qt-mono" style={{ width: 72, textTransform: 'none' }}>+{Math.round(chunk.elapsed)}ms</span>
+        <span style={{ flex: 1, textAlign: 'center' }}>stream end · [DONE]</span>
       </div>
     );
   }
 
+  // Card with subtle elevation (tinted shadow), 10px outer radius.
+  // Inner pre uses 8px radius to maintain "tighter inner / softer outer" rhythm.
   return (
     <div
       style={{
-        background: C.codeBg,
+        background: C.surface,
         border: `1px solid ${C.border}`,
-        borderRadius: 6,
-        margin: '6px 0',
+        borderRadius: 10,
+        margin: '7px 0',
         overflow: 'hidden',
+        boxShadow: expanded ? C.shadowMd : C.shadowSm,
+        transition: 'box-shadow 180ms cubic-bezier(0.32, 0.72, 0, 1)',
       }}
     >
       {/* Header — clickable to toggle */}
@@ -827,20 +1295,20 @@ function ChunkCard({
           display: 'flex',
           alignItems: 'center',
           gap: 10,
-          padding: '6px 10px',
+          padding: '7px 10px',
           cursor: 'pointer',
           userSelect: 'none',
-          background: expanded ? C.tabActive : 'transparent',
-          transition: 'background 0.15s',
+          background: expanded ? C.surfaceAlt : 'transparent',
+          transition: 'background 150ms ease',
         }}
       >
         <span
+          className="qt-mono"
           style={{
             color: C.dimText,
             fontSize: 10,
-            fontFamily: 'monospace',
             transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-            transition: 'transform 0.15s',
+            transition: 'transform 180ms cubic-bezier(0.32, 0.72, 0, 1)',
             display: 'inline-block',
             width: 10,
           }}
@@ -848,42 +1316,42 @@ function ChunkCard({
           ▶
         </span>
         <span
+          className="qt-mono"
           style={{
             width: 36,
             textAlign: 'right',
             color: C.dimText,
             fontSize: 11,
-            fontFamily: 'monospace',
           }}
         >
           #{index}
         </span>
         <span
+          className="qt-mono"
           style={{
             width: 70,
-            color: C.accent,
+            color: C.subtext,
             fontSize: 11,
-            fontFamily: 'monospace',
           }}
         >
           +{Math.round(chunk.elapsed)}ms
         </span>
         <span
+          className="qt-mono"
           style={{
             width: 56,
             color: C.dimText,
             fontSize: 11,
-            fontFamily: 'monospace',
           }}
           title="Time since previous chunk"
         >
           Δ{Math.round(chunk.deltaMs)}ms
         </span>
         <span
+          className="qt-mono"
           style={{
             color: summary.color,
             fontSize: 11,
-            fontFamily: 'monospace',
             fontWeight: 600,
             minWidth: 90,
           }}
@@ -891,11 +1359,11 @@ function ChunkCard({
           {summary.label}
         </span>
         <span
+          className="qt-mono"
           style={{
             flex: 1,
             color: summary.color,
             fontSize: 12,
-            fontFamily: 'monospace',
             whiteSpace: 'pre',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -911,19 +1379,20 @@ function ChunkCard({
 
       {/* Body */}
       {expanded && (
-        <div style={{ borderTop: `1px solid ${C.border}` }}>
+        <div style={{ borderTop: `1px solid ${C.border}`, background: C.codeBg }}>
           <pre
             style={{
               background: 'transparent',
               color: C.text,
-              padding: 12,
+              padding: '14px 16px',
               margin: 0,
               fontSize: 12,
-              lineHeight: 1.5,
+              lineHeight: 1.55,
               overflow: 'auto',
               maxHeight: 360,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
+              borderRadius: 0,
             }}
           >
             <code>{prettyJson}</code>
@@ -1041,12 +1510,16 @@ interface DetailPanelProps {
   trace: TraceEntry | null;
 }
 
-function DetailPanel({ trace }: DetailPanelProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('overview');
+// Pretty is the most useful tab for "what did the AI actually say?" — make it
+// the default both on initial mount and whenever the user switches traces.
+const DEFAULT_TAB: TabId = 'response';
 
-  // Reset to overview when selected trace changes
+function DetailPanel({ trace }: DetailPanelProps) {
+  const [activeTab, setActiveTab] = useState<TabId>(DEFAULT_TAB);
+
+  // Reset to the default tab when the selected trace changes
   useEffect(() => {
-    setActiveTab('overview');
+    setActiveTab(DEFAULT_TAB);
   }, [trace?.id]);
 
   if (!trace) {
@@ -1058,12 +1531,38 @@ function DetailPanel({ trace }: DetailPanelProps) {
           justifyContent: 'center',
           height: '100%',
           background: C.bg,
-          color: C.dimText,
-          fontSize: 14,
+          padding: 32,
           userSelect: 'none',
         }}
       >
-        Select a request to view details
+        <div style={{ maxWidth: 360, textAlign: 'center' }}>
+          <div
+            aria-hidden
+            style={{
+              width: 56,
+              height: 56,
+              margin: '0 auto 18px',
+              borderRadius: 14,
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: C.subtext,
+              fontSize: 22,
+              boxShadow: C.shadowSm,
+            }}
+          >
+            ⌘
+          </div>
+          <div style={{ color: C.text, fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+            No request selected
+          </div>
+          <div style={{ color: C.dimText, fontSize: 12, lineHeight: 1.6 }}>
+            Pick a captured request from the list on the left to inspect headers, payload,
+            and the live SSE stream. New requests appear automatically while Qwen Code is running.
+          </div>
+        </div>
       </div>
     );
   }
@@ -1097,13 +1596,18 @@ function DetailPanel({ trace }: DetailPanelProps) {
         color: C.text,
       }}
     >
-      {/* Tab bar */}
-      <div
+      {/* Tab bar — uses semantic <nav role="tablist"> for screen readers.
+          Active tab indicated by accent underline (the only place accent appears
+          in the chrome). All other state is communicated by weight + color shift. */}
+      <nav
+        role="tablist"
+        aria-label="Trace detail sections"
         style={{
           display: 'flex',
           background: C.tabBar,
           borderBottom: `1px solid ${C.border}`,
           flexShrink: 0,
+          padding: '0 4px',
         }}
       >
         {TABS.map((tab) => {
@@ -1111,26 +1615,39 @@ function DetailPanel({ trace }: DetailPanelProps) {
           return (
             <button
               key={tab.id}
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
               style={{
-                padding: '10px 16px',
-                fontSize: 13,
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? C.tabActiveText : C.tabInactiveText,
-                background: isActive ? C.tabActive : 'transparent',
+                position: 'relative',
+                padding: '11px 14px 10px',
+                fontSize: 12,
+                fontWeight: isActive ? 600 : 500,
+                color: isActive ? C.text : C.tabInactiveText,
+                background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
-                outline: 'none',
-                transition: 'background 0.15s, color 0.15s',
-                borderBottom: isActive ? `2px solid ${C.accent}` : '2px solid transparent',
-                fontFamily: 'inherit',
               }}
             >
               {tab.label}
+              {/* Active underline as a separate element so :active scale doesn't move it */}
+              <span
+                aria-hidden
+                style={{
+                  position: 'absolute',
+                  left: 8,
+                  right: 8,
+                  bottom: -1,
+                  height: 2,
+                  background: isActive ? C.accent : 'transparent',
+                  borderRadius: 1,
+                  transition: 'background 150ms ease',
+                }}
+              />
             </button>
           );
         })}
-      </div>
+      </nav>
 
       {/* Tab content */}
       <div
