@@ -19,6 +19,8 @@ body {
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* tabular figures everywhere by default — this is a data tool */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Scrollbar styling (Webkit) */
@@ -52,4 +54,89 @@ body {
 /* Code/pre defaults */
 code, pre {
   font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Interactive primitives ────────────────────────────────────
+   Used by every button, tab, and clickable surface in the app.
+   Keeps active/focus feedback consistent without per-component
+   inline-style boilerplate. */
+
+button {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+button:not(:disabled) {
+  /* Tactile press: matches skill rule "scale(0.98) or translateY(1px) on :active" */
+  transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1),
+              background-color 150ms ease,
+              border-color 150ms ease,
+              color 150ms ease,
+              box-shadow 150ms ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(0.5px) scale(0.985);
+}
+
+/* Focus ring — single source of truth, only when keyboard-focused.
+   Uses background-tinted glow instead of generic browser outline. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px #1e1e2e, 0 0 0 3px rgba(137, 180, 250, 0.45);
+  border-radius: 5px;
+}
+
+/* Tabular utility — drop on any inline number to enforce monospace digits
+   without changing the font face. */
+.qt-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Mono utility — for raw data, IDs, hex, durations, counts. */
+.qt-mono {
+  font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Eyebrow — small caps label used above section titles. */
+.qt-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #6c7086;
+}
+
+/* ── Header buttons (Save / Clear) ─────────────────────────────
+   Used in the top app header. Pill-shaped, neutral by default,
+   colored on hover. Respects :disabled and :focus-visible. */
+.qt-header-btn {
+  background: transparent;
+  border: 1px solid #2a2a3c;
+  color: #a6adc8;
+  font-size: 11px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.qt-header-btn:hover:not(:disabled) {
+  border-color: #393952;
+  color: #cdd6f4;
+  background: rgba(205, 214, 244, 0.04);
+}
+
+.qt-header-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.qt-header-btn--danger:hover:not(:disabled) {
+  border-color: rgba(243, 139, 168, 0.5);
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.06);
 }
