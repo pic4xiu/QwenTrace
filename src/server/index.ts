@@ -82,12 +82,11 @@ class TraceStore {
       startTime: event.timestamp,
       url: event.url,
       method: event.method,
-      requestHeaders: event.headers,
+      // headers intentionally not stored — see types.ts for rationale
       requestBody: parsedBody,
       rawRequestBody: event.body,
       status: 0,
       statusText: '',
-      responseHeaders: {},
       isSSE: false,
       chunks: [],
       assembled: null,
@@ -106,17 +105,20 @@ class TraceStore {
     const trace = this.traces.get(event.traceId);
     if (!trace) return this.handleRequest({
       type: 'request', traceId: event.traceId, timestamp: event.timestamp - event.ttfb,
-      url: '(unknown)', method: 'POST', headers: {}, body: null,
+      url: '(unknown)', method: 'POST', body: null,
     });
 
     trace.status = event.status;
     trace.statusText = event.statusText;
-    trace.responseHeaders = event.headers;
     trace.ttfb = event.ttfb;
 
-    const contentType = event.headers['content-type'] || '';
-    trace.isSSE = contentType.includes('text/event-stream') || contentType.includes('text/plain');
-    if (trace.isSSE || trace.requestBody?.stream) {
+    // SSE detection: Qwen Code (and the OpenAI SDK in general) decides whether
+    // to stream from the *request* `stream: true` flag — it never inspects the
+    // response Content-Type. Mirror that behaviour here so we don't depend on
+    // headers we no longer collect. Fall back to the hook-reported flag only
+    // if request body parsing failed.
+    trace.isSSE = trace.requestBody?.stream === true || event.isSSE === true;
+    if (trace.isSSE) {
       trace.state = 'streaming';
     }
 
@@ -128,7 +130,15 @@ class TraceStore {
     if (!trace) return { trace: this.createPlaceholder(event.traceId), isNew: true };
 
     trace.isSSE = true;
-    trace.state = 'streaming';
+    // Don't regress an already-finished trace back to 'streaming'. Trace events
+    // are sent fire-and-forget over independent HTTP POSTs from the hook, so
+    // they can arrive out of order — in particular the final chunks (including
+    // the `[DONE]` marker) sometimes land *after* the `complete` event. Without
+    // this guard the row's status dot keeps pulsing forever even though the
+    // request is done.
+    if (trace.state !== 'complete' && trace.state !== 'error') {
+      trace.state = 'streaming';
+    }
 
     const prevChunk = trace.chunks[trace.chunks.length - 1];
     const deltaMs = prevChunk ? event.timestamp - prevChunk.timestamp : 0;
@@ -169,19 +179,23 @@ class TraceStore {
     trace.responseBody = event.body;
     trace.duration = event.duration;
 
-    // Try to parse as JSON for non-streaming responses
+    // Try to parse as JSON for non-streaming responses.
+    // Qwen / DeepSeek-style models return their chain-of-thought under
+    // `message.reasoning_content` — preserve it as `thinkingText` so the
+    // Response tab shows the full picture, not just the bare tool call.
     if (event.body) {
       try {
         const parsed = JSON.parse(event.body);
         const choice = parsed.choices?.[0];
+        const message = choice?.message || {};
         trace.assembled = {
-          fullText: choice?.message?.content || '',
-          toolCalls: (choice?.message?.tool_calls || []).map((tc: any) => ({
+          fullText: message.content || '',
+          thinkingText: message.reasoning_content || message.thinking || '',
+          toolCalls: (message.tool_calls || []).map((tc: any) => ({
             id: tc.id,
             name: tc.function?.name || '',
             arguments: tc.function?.arguments || '',
           })),
-          thinkingText: '',
           finishReason: choice?.finish_reason || '',
           model: parsed.model || '',
           usage: {
@@ -203,6 +217,9 @@ class TraceStore {
 
     trace.state = event.error ? 'error' : 'complete';
     trace.duration = event.duration;
+    // Stamp endTime so exports / future analytics have an absolute clock value
+    // (duration alone is just a delta — useful for display, useless for joins).
+    trace.endTime = event.timestamp;
     if (event.error) trace.error = event.error;
 
     return { trace, isNew: false };
@@ -215,6 +232,7 @@ class TraceStore {
     trace.state = 'error';
     trace.error = event.error;
     trace.duration = event.duration;
+    trace.endTime = event.timestamp;
 
     return { trace, isNew: false };
   }
@@ -225,12 +243,10 @@ class TraceStore {
       startTime: Date.now(),
       url: '(unknown)',
       method: 'POST',
-      requestHeaders: {},
       requestBody: null,
       rawRequestBody: null,
       status: 0,
       statusText: '',
-      responseHeaders: {},
       isSSE: false,
       chunks: [],
       assembled: null,
@@ -262,6 +278,16 @@ class TraceStore {
 
       if (p.delta?.content) {
         fullText += p.delta.content;
+      }
+
+      // Streaming reasoning_content (Qwen / DeepSeek). Some providers also
+      // emit it as `thinking` — accept both. Cast through `any` because
+      // these fields are vendor-specific extensions to the OpenAI schema.
+      const delta = p.delta as any;
+      if (delta?.reasoning_content) {
+        thinkingText += delta.reasoning_content;
+      } else if (delta?.thinking) {
+        thinkingText += delta.thinking;
       }
 
       if (p.delta?.tool_calls) {

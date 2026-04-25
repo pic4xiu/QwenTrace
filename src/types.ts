@@ -13,8 +13,12 @@ export interface TraceRequestEvent {
   timestamp: number;
   url: string;
   method: string;
-  headers: Record<string, string>;
   body: string | null;
+  /**
+   * @deprecated Headers are no longer captured (2026-04). Field kept optional
+   * so the type stays compatible if external tooling still emits it.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface TraceResponseStartEvent {
@@ -23,8 +27,18 @@ export interface TraceResponseStartEvent {
   timestamp: number;
   status: number;
   statusText: string;
-  headers: Record<string, string>;
   ttfb: number;
+  /**
+   * Hook-side hint indicating the response was a stream. Server prefers to
+   * derive this from the request body's `stream: true` flag and only falls
+   * back to this when request body parsing failed.
+   */
+  isSSE?: boolean;
+  /**
+   * @deprecated Headers are no longer captured (2026-04). Field kept optional
+   * so the type stays compatible if external tooling still emits it.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface TraceSSEChunkEvent {
@@ -80,6 +94,10 @@ export interface ParsedSSEChunk {
     delta?: {
       role?: string;
       content?: string;
+      // Qwen / DeepSeek emit chain-of-thought via `reasoning_content`,
+      // some providers (Anthropic-compat) use `thinking`. Capture both.
+      reasoning_content?: string;
+      thinking?: string;
       tool_calls?: Array<{
         index: number;
         id?: string;
@@ -136,16 +154,21 @@ export interface ParsedRequestBody {
 export interface TraceEntry {
   id: TraceId;
   startTime: number;
+  /**
+   * Wall-clock timestamp at which the trace transitioned to a terminal state
+   * (`complete` or `error`). Undefined while the request is still in flight.
+   * Useful for joins / analytics where `duration` (a relative delta) is
+   * insufficient.
+   */
+  endTime?: number;
   // Request
   url: string;
   method: string;
-  requestHeaders: Record<string, string>;
   requestBody: ParsedRequestBody | null;
   rawRequestBody: string | null;
   // Response
   status: number;
   statusText: string;
-  responseHeaders: Record<string, string>;
   // SSE
   isSSE: boolean;
   chunks: ParsedSSEChunk[];
@@ -158,6 +181,15 @@ export interface TraceEntry {
   // State
   state: 'pending' | 'streaming' | 'complete' | 'error';
   error?: string;
+  /**
+   * @deprecated Headers are no longer captured (2026-04). Reading these from
+   * an old export file is still supported, but new traces will leave them
+   * undefined. Verified that Qwen Code's pipeline only consumes the response
+   * body (qwen-code/packages/core/src/core/openaiContentGenerator/).
+   */
+  requestHeaders?: Record<string, string>;
+  /** @deprecated See `requestHeaders` above. */
+  responseHeaders?: Record<string, string>;
 }
 
 // ---- WebSocket messages (server ↔ frontend) ---- //

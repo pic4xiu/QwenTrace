@@ -23,14 +23,43 @@ function genId() {
   }
 }
 
-/** Fire-and-forget: send a trace event to the QwenTrace server. */
-function sendTrace(data) {
-  _originalFetch(TRACE_URL, {
+/**
+ * Per-trace event queue: serialize all sends for a given traceId so events
+ * arrive at the server in the same order they were emitted by the hook.
+ *
+ * Why this matters: each `_originalFetch` POST is independent and the server
+ * processes them as they land on its socket. Without serialization the
+ * `complete` event could overtake a late `[DONE]` chunk, which would race the
+ * server into setting `state = 'streaming'` AFTER `state = 'complete'` — the
+ * end result being a status dot that pulses forever for a finished request.
+ *
+ * We key the queue by traceId so independent traces still send in parallel.
+ * Once a trace's queue drains, we drop the entry to avoid a slow memory leak.
+ */
+const _traceQueues = new Map();
+
+function _postEvent(data) {
+  return _originalFetch(TRACE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   }).catch(() => {
-    // Server might not be running — silently ignore
+    // Server might not be running — silently ignore.
+  });
+}
+
+function sendTrace(data) {
+  const key = data.traceId || '__global__';
+  const prev = _traceQueues.get(key) || Promise.resolve();
+  const next = prev.then(() => _postEvent(data));
+  _traceQueues.set(key, next);
+
+  // Drop the queue reference once it settles, but only if no later send has
+  // chained onto it in the meantime.
+  next.finally(() => {
+    if (_traceQueues.get(key) === next) {
+      _traceQueues.delete(key);
+    }
   });
 }
 
@@ -51,20 +80,18 @@ function shouldTrace(url) {
   );
 }
 
-/** Extract headers as plain object. */
-function headersToObject(headers) {
-  const obj = {};
-  if (!headers) return obj;
-  try {
-    if (typeof headers.entries === 'function') {
-      for (const [k, v] of headers.entries()) obj[k] = v;
-    } else if (typeof headers === 'object') {
-      for (const [k, v] of Object.entries(headers)) {
-        if (typeof v === 'string') obj[k] = v;
-      }
-    }
-  } catch { /* best effort */ }
-  return obj;
+/**
+ * Detect whether the response is a stream by sniffing Content-Type.
+ * Used ONLY to set the lightweight `isSSE` flag on the response-start event;
+ * we no longer ship the full headers object since Qwen Code itself doesn't
+ * consume response headers in its model pipeline (and the bearer token in
+ * request headers was a security risk in exports).
+ */
+function detectIsSSE(responseHeaders) {
+  if (!responseHeaders || typeof responseHeaders.get !== 'function') return false;
+  const ct = (responseHeaders.get('content-type') || '').toLowerCase();
+  // text/plain is intentionally tolerated — some proxies rewrite SSE.
+  return ct.includes('text/event-stream') || ct.includes('text/plain');
 }
 
 /** Safely extract request body as string. */
@@ -173,6 +200,8 @@ globalThis.fetch = async function qwenTraceFetch(input, init) {
   const startTime = Date.now();
 
   // --- Report request ---
+  // Headers intentionally NOT sent — they only contain SDK metadata
+  // (x-stainless-*) and a bearer token, neither of which the AI sees.
   const requestBody = extractBody(init);
   sendTrace({
     type: 'request',
@@ -180,7 +209,6 @@ globalThis.fetch = async function qwenTraceFetch(input, init) {
     timestamp: startTime,
     url,
     method: init?.method || 'POST',
-    headers: headersToObject(init?.headers),
     body: requestBody,
   });
 
@@ -189,22 +217,21 @@ globalThis.fetch = async function qwenTraceFetch(input, init) {
     const response = await _originalFetch(input, init);
     const now = Date.now();
 
+    // --- Detect streaming once, share with both the report and the body branch ---
+    const isSSE = detectIsSSE(response.headers);
+
     // --- Report response start ---
+    // Only ship `isSSE` (a single bool) instead of the entire headers object;
+    // see types.ts for the full rationale.
     sendTrace({
       type: 'response-start',
       traceId,
       timestamp: now,
       status: response.status,
       statusText: response.statusText,
-      headers: headersToObject(response.headers),
       ttfb: now - startTime,
+      isSSE,
     });
-
-    // --- Handle SSE streaming responses ---
-    const contentType = response.headers.get('content-type') || '';
-    const isSSE =
-      contentType.includes('text/event-stream') ||
-      contentType.includes('text/plain'); // Some providers use text/plain for SSE
 
     // Check if this is actually a streaming request
     let requestIsStreaming = false;
