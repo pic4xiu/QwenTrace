@@ -42,6 +42,7 @@ export type AgentRoleId =
   | 'subagent-explore'
   | 'subagent-statusline'
   | 'subagent-architect'
+  | 'webfetch-extract'
   | 'unknown';
 
 /** Broad grouping for filter chips and color hints. */
@@ -187,6 +188,16 @@ export const AGENT_ROLE_META: Record<AgentRoleId, AgentRoleMeta> = {
     description:
       'Crafts new subagent configurations from a natural-language description.',
   },
+  'webfetch-extract': {
+    id: 'webfetch-extract',
+    label: 'Webfetch · extract',
+    shortLabel: 'Web · extract',
+    symbol: '◇',
+    group: 'subagent',
+    color: '#fab387',
+    description:
+      'Lightweight LLM call that extracts and summarises content from a fetched web page.',
+  },
   unknown: {
     id: 'unknown',
     label: 'Unknown role',
@@ -282,6 +293,15 @@ const RULES: DetectionRule[] = [
   {
     id: 'subagent-architect',
     matches: (s) => s.startsWith('You are an elite AI agent architect'),
+  },
+
+  // — Tool-internal LLM calls —
+  {
+    id: 'webfetch-extract',
+    matches: (s) =>
+      s.startsWith(
+        'Extract and summarize the requested information from the provided web content',
+      ),
   },
 ];
 

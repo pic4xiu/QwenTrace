@@ -2,35 +2,33 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { TraceEntry, ParsedSSEChunk } from '../../types';
 import { getAgentRoleMeta } from '../utils/agentRole';
 
-// ── Color tokens ──────────────────────────────────────────────
-// Catppuccin Mocha base, deliberately scoped:
-//   - `accent` is the ONLY blue and is reserved for active/focused/CTA states
-//   - section titles, table keys, and metadata use neutral subtext, not accent
-//   - shadows are tinted to the canvas (`#1e1e2e`) instead of generic black
+// ── Color tokens (CSS variable references) ────────────────────
+// All values reference the theme variables defined in App.css.
+// Dark = Catppuccin Mocha, Light = Catppuccin Latte.
 const C = {
-  bg: '#1e1e2e',
-  surface: '#232334',     // raised one step above bg, for cards
-  surfaceAlt: '#262638',  // raised two steps, for expanded states
-  tabBar: '#181825',
-  tabActive: '#2a2a3c',
-  tabActiveText: '#cdd6f4',
-  tabInactiveText: '#6c7086',
-  text: '#cdd6f4',
-  subtext: '#a6adc8',
-  codeBg: '#161622',
-  border: '#2a2a3c',
-  borderStrong: '#393952',
-  accent: '#89b4fa',
-  accentDim: '#89b4fa22',
-  dimText: '#585b70',
-  badgeBg: 'rgba(205, 214, 244, 0.06)',
-  badgeText: '#a6adc8',
-  errorText: '#f38ba8',
-  successText: '#a6e3a1',
-  warningText: '#f9e2af',
-  toolText: '#fab387',    // peach for tool calls — distinct from warning
-  shadowSm: '0 1px 2px rgba(0, 0, 0, 0.25)',
-  shadowMd: '0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(11, 11, 18, 0.35)',
+  bg: 'var(--qt-bg)',
+  surface: 'var(--qt-bg-surface)',
+  surfaceAlt: 'var(--qt-bg-surface-alt)',
+  tabBar: 'var(--qt-bg-header)',
+  tabActive: 'var(--qt-bg-selected)',
+  tabActiveText: 'var(--qt-text)',
+  tabInactiveText: 'var(--qt-text-muted)',
+  text: 'var(--qt-text)',
+  subtext: 'var(--qt-text-sub)',
+  codeBg: 'var(--qt-bg-code)',
+  border: 'var(--qt-border)',
+  borderStrong: 'var(--qt-border-strong)',
+  accent: 'var(--qt-accent)',
+  accentDim: 'var(--qt-accent-dim)',
+  dimText: 'var(--qt-text-dim)',
+  badgeBg: 'var(--qt-badge-bg)',
+  badgeText: 'var(--qt-badge-text)',
+  errorText: 'var(--qt-status-red)',
+  successText: 'var(--qt-status-green)',
+  warningText: 'var(--qt-status-warning)',
+  toolText: 'var(--qt-status-tool)',
+  shadowSm: 'var(--qt-shadow-sm)',
+  shadowMd: 'var(--qt-shadow-md)',
 } as const;
 
 type TabId = 'overview' | 'request' | 'response' | 'sse' | 'timing';
@@ -119,7 +117,7 @@ function KVRow({ label, value, valueColor, mono }: { label: string; value: React
   );
 }
 
-function CodeBlock({ children }: { children: string }) {
+function CodeBlock({ children, maxHeight }: { children: string; maxHeight?: number }) {
   return (
     <pre
       style={{
@@ -131,7 +129,7 @@ function CodeBlock({ children }: { children: string }) {
         fontSize: 12,
         lineHeight: 1.55,
         overflow: 'auto',
-        maxHeight: 500,
+        ...(maxHeight != null ? { maxHeight } : {}),
         margin: '6px 0',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
@@ -187,21 +185,25 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
-        background: copied ? 'rgba(166, 227, 161, 0.12)' : 'transparent',
-        border: `1px solid ${copied ? C.successText : C.border}`,
-        color: copied ? C.successText : C.subtext,
+        gap: 4,
+        background: 'transparent',
+        border: 'none',
+        color: copied ? C.successText : C.dimText,
         fontSize: 11,
-        padding: '3px 10px 3px 8px',
-        borderRadius: 999,
+        padding: '2px 6px',
+        borderRadius: 4,
         cursor: 'pointer',
-        marginLeft: 8,
+        marginLeft: 6,
         whiteSpace: 'nowrap',
+        transition: 'color 150ms ease',
       }}
     >
-      <span aria-hidden style={{ fontSize: 12, lineHeight: 1, opacity: 0.85 }}>
-        {copied ? '✓' : '⎘'}
-      </span>
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
+        {copied
+          ? <path d="M4 8.5L6.5 11L12 5" />
+          : <><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M5 10.5H3.5a1.5 1.5 0 01-1.5-1.5v-6A1.5 1.5 0 013.5 1.5h6A1.5 1.5 0 0111 3V5" /></>
+        }
+      </svg>
       {copied ? 'Copied' : (label || 'Copy')}
     </button>
   );
@@ -267,9 +269,6 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           with the surface fill), keeping the page calm but unmistakable. */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 14,
           padding: '14px 16px',
           marginBottom: 18,
           background: C.surface,
@@ -278,25 +277,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           boxShadow: C.shadowSm,
         }}
       >
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 36,
-            height: 36,
-            flexShrink: 0,
-            borderRadius: 8,
-            background: `${role.color}1f`, // ~12% alpha tinted fill
-            color: role.color,
-            fontSize: 18,
-            lineHeight: 1,
-          }}
-        >
-          {role.symbol}
-        </span>
-        <div style={{ minWidth: 0, flex: 1 }}>
+        <div>
           <div className="qt-eyebrow" style={{ marginBottom: 4 }}>
             Agent role
           </div>
@@ -406,11 +387,8 @@ function RequestTab({ trace }: { trace: TraceEntry }) {
       : null;
 
   return (
-    <div>
-      {/* Headers intentionally hidden — Qwen Code uses only request body for
-          model interaction. Headers are SDK metadata + bearer token (security
-          risk in exports). See git log 2026-04 for full rationale. */}
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
         <SectionTitle>
           Request body
           {messagesCount > 0 && <Badge>{messagesCount} message{messagesCount !== 1 ? 's' : ''}</Badge>}
@@ -419,7 +397,24 @@ function RequestTab({ trace }: { trace: TraceEntry }) {
         {bodyText && <CopyButton text={bodyText} />}
       </div>
       {bodyText ? (
-        <CodeBlock>{bodyText}</CodeBlock>
+        <pre
+          style={{
+            flex: 1,
+            background: C.codeBg,
+            color: C.text,
+            padding: '12px 14px',
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            fontSize: 12,
+            lineHeight: 1.55,
+            overflow: 'auto',
+            margin: '6px 0 0',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          <code>{bodyText}</code>
+        </pre>
       ) : (
         <div style={{ color: C.dimText, fontSize: 12, padding: '8px 0' }}>No request body.</div>
       )}
@@ -543,8 +538,8 @@ function ResponseTab({ trace }: { trace: TraceEntry }) {
                       {tc.name || '(unnamed)'}
                     </span>
                     {tc.id && (
-                      <span className="qt-mono" style={{ color: C.dimText, fontSize: 10 }}>
-                        {tc.id}
+                      <span className="qt-mono" style={{ color: C.dimText, fontSize: 10, opacity: 0.6 }}>
+                        {tc.id.length > 12 ? `${tc.id.slice(0, 8)}...` : tc.id}
                       </span>
                     )}
                   </div>
@@ -1194,7 +1189,7 @@ function SegmentedControl<T extends string>({
       role="tablist"
       style={{
         display: 'inline-flex',
-        background: 'rgba(0, 0, 0, 0.18)',
+        background: 'var(--qt-segmented-bg)',
         border: `1px solid ${C.border}`,
         borderRadius: 999,
         padding: 2,
@@ -1443,13 +1438,13 @@ function TimingTab({ trace }: { trace: TraceEntry }) {
           <div
             style={{
               width: `${ttfbPct}%`,
-              background: '#fab387',
+              background: 'var(--qt-status-tool)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: 11,
               fontWeight: 600,
-              color: '#1e1e2e',
+              color: 'var(--qt-bg)',
               minWidth: ttfbPct > 8 ? undefined : 0,
               overflow: 'hidden',
               whiteSpace: 'nowrap',
@@ -1468,7 +1463,7 @@ function TimingTab({ trace }: { trace: TraceEntry }) {
               justifyContent: 'center',
               fontSize: 11,
               fontWeight: 600,
-              color: '#1e1e2e',
+              color: 'var(--qt-bg)',
               overflow: 'hidden',
               whiteSpace: 'nowrap',
             }}
@@ -1481,7 +1476,7 @@ function TimingTab({ trace }: { trace: TraceEntry }) {
       {/* Legend */}
       <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#fab387' }} />
+          <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: 'var(--qt-status-tool)' }} />
           <span style={{ color: C.subtext }}>TTFB</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1539,21 +1534,24 @@ function DetailPanel({ trace }: DetailPanelProps) {
           <div
             aria-hidden
             style={{
-              width: 56,
-              height: 56,
+              width: 40,
+              height: 40,
               margin: '0 auto 18px',
-              borderRadius: 14,
+              borderRadius: 10,
               background: C.surface,
               border: `1px solid ${C.border}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: C.subtext,
-              fontSize: 22,
               boxShadow: C.shadowSm,
             }}
           >
-            ⌘
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="12" height="2" rx="1" />
+              <rect x="3" y="8" width="8" height="2" rx="1" />
+              <rect x="3" y="12" width="10" height="2" rx="1" />
+            </svg>
           </div>
           <div style={{ color: C.text, fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
             No request selected
@@ -1604,10 +1602,11 @@ function DetailPanel({ trace }: DetailPanelProps) {
         aria-label="Trace detail sections"
         style={{
           display: 'flex',
+          gap: 2,
           background: C.tabBar,
           borderBottom: `1px solid ${C.border}`,
           flexShrink: 0,
-          padding: '0 4px',
+          padding: '0 8px',
         }}
       >
         {TABS.map((tab) => {
@@ -1618,15 +1617,19 @@ function DetailPanel({ trace }: DetailPanelProps) {
               role="tab"
               aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
+              onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'var(--qt-bg-hover)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
               style={{
                 position: 'relative',
-                padding: '11px 14px 10px',
+                padding: '12px 16px 11px',
                 fontSize: 12,
                 fontWeight: isActive ? 600 : 500,
                 color: isActive ? C.text : C.tabInactiveText,
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
+                borderRadius: '6px 6px 0 0',
+                transition: 'color 150ms ease, background-color 150ms ease',
               }}
             >
               {tab.label}
@@ -1641,7 +1644,7 @@ function DetailPanel({ trace }: DetailPanelProps) {
                   height: 2,
                   background: isActive ? C.accent : 'transparent',
                   borderRadius: 1,
-                  transition: 'background 150ms ease',
+                  transition: 'background 200ms cubic-bezier(0.32, 0.72, 0, 1)',
                 }}
               />
             </button>
@@ -1654,11 +1657,15 @@ function DetailPanel({ trace }: DetailPanelProps) {
         style={{
           flex: 1,
           overflow: 'auto',
-          padding: '0 16px 16px',
+          padding: '0 20px 20px',
           minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        {tabContent}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          {tabContent}
+        </div>
       </div>
     </div>
   );

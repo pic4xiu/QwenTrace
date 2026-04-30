@@ -100,15 +100,16 @@ QwenTrace 通过匹配 system prompt 与 qwen-code 源码里的固定常量，�
 - **Session recap / title** — 会话相关的短任务服务
 - **Context compressor** — 上下文超限时触发的压缩任务
 - **内置 subagent** — `general-purpose`、`Explore`、`statusline-setup`、agent architect
+- **Webfetch extract** — 从抓取的网页中轻量提取内容
 
 每个角色在侧边栏对应一个色块徽章，详情页顶部还有一张身份卡。识别不到
 的会显示为 `Unknown`（一般是自定义 subagent 或 MCP server）。
 
 ## 面板
 
-暗色主题（Catppuccin Mocha）单页应用：
+支持 system / light / dark 三种主题切换的单页应用：
 
-- **侧边栏**：请求列表，显示角色徽章、模型名、状态码、耗时、token 数、流式状态
+- **侧边栏**：请求列表，每条 trace 双行布局 — 第一行：状态点 + 序号 + 角色徽章 + 耗时；第二行：模型名 + 状态码 + token 数。Copy 按钮改为无边框 SVG 图标，空状态使用骨架线 shimmer 动画，首条 trace 自动选中
 - **详情面板** 5 个 Tab：
   - **Overview** — Agent 角色身份卡、URL、模型、状态、耗时、token 用量
   - **Request** — 格式化 JSON body、message/tool 数量标签
@@ -127,7 +128,7 @@ src/
 ├── web/
 │   ├── main.tsx           # React 入口
 │   ├── App.tsx            # 布局 + 顶栏
-│   ├── App.css            # 全局样式（Catppuccin Mocha）
+│   ├── App.css            # 全局样式（CSS custom properties 主题系统）
 │   ├── hooks/
 │   │   └── useTraces.ts   # WebSocket hook，自动重连
 │   ├── utils/
@@ -156,7 +157,7 @@ Hook 匹配以下 URL 模式：
 - **Hook**：ESM 模块，零依赖，纯 `globalThis.fetch` patch
 - **Server**：Express + ws（WebSocket），内存 TraceStore
 - **前端**：React 18 + Vite + TypeScript
-- **样式**：Catppuccin Mocha 暗色主题，手写 CSS
+- **样式**：CSS custom properties 主题系统（dark/light），手写 CSS
 
 ## License
 

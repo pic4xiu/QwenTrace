@@ -1,5 +1,80 @@
 /* QwenTrace — Global reset & base styles */
 
+/* ── Theme variables ──────────────────────────────────────────
+   Dark (Catppuccin Mocha) is the default. Light (Catppuccin Latte)
+   activates via [data-theme='light'] on <html>.                   */
+
+:root,
+[data-theme='dark'] {
+  --qt-bg: #1e1e2e;
+  --qt-bg-surface: #232334;
+  --qt-bg-surface-alt: #262638;
+  --qt-bg-header: #181825;
+  --qt-bg-selected: #2a2a3c;
+  --qt-bg-hover: rgba(205, 214, 244, 0.04);
+  --qt-bg-code: #161622;
+  --qt-text: #cdd6f4;
+  --qt-text-sub: #a6adc8;
+  --qt-text-muted: #6c7086;
+  --qt-text-dim: #585b70;
+  --qt-border: #2a2a3c;
+  --qt-border-strong: #393952;
+  --qt-accent: #89b4fa;
+  --qt-accent-dim: rgba(137, 180, 250, 0.13);
+  --qt-status-green: #a6e3a1;
+  --qt-status-red: #f38ba8;
+  --qt-status-warning: #f9e2af;
+  --qt-status-tool: #fab387;
+  --qt-dot-blue: #89b4fa;
+  --qt-dot-green: #a6e3a1;
+  --qt-dot-red: #f38ba8;
+  --qt-dot-gray: #6c7086;
+  --qt-scrollbar-thumb: #45475a;
+  --qt-scrollbar-thumb-hover: #585b70;
+  --qt-selection-bg: rgba(137, 180, 250, 0.25);
+  --qt-badge-bg: rgba(205, 214, 244, 0.06);
+  --qt-badge-text: #a6adc8;
+  --qt-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --qt-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(11, 11, 18, 0.35);
+  --qt-focus-ring: 0 0 0 1px #1e1e2e, 0 0 0 3px rgba(137, 180, 250, 0.45);
+  --qt-segmented-bg: rgba(0, 0, 0, 0.18);
+}
+
+[data-theme='light'] {
+  --qt-bg: #fafafa;
+  --qt-bg-surface: #ffffff;
+  --qt-bg-surface-alt: #f0f0f3;
+  --qt-bg-header: #f5f5f7;
+  --qt-bg-selected: #e8eaef;
+  --qt-bg-hover: rgba(60, 60, 80, 0.04);
+  --qt-bg-code: #f3f4f6;
+  --qt-text: #1a1a2e;
+  --qt-text-sub: #3a3a52;
+  --qt-text-muted: #6b6b80;
+  --qt-text-dim: #8e8e9f;
+  --qt-border: #e2e2e8;
+  --qt-border-strong: #d0d0d8;
+  --qt-accent: #2563eb;
+  --qt-accent-dim: rgba(37, 99, 235, 0.08);
+  --qt-status-green: #16a34a;
+  --qt-status-red: #dc2626;
+  --qt-status-warning: #d97706;
+  --qt-status-tool: #ea580c;
+  --qt-dot-blue: #2563eb;
+  --qt-dot-green: #16a34a;
+  --qt-dot-red: #dc2626;
+  --qt-dot-gray: #9ca3af;
+  --qt-scrollbar-thumb: #c8c8d0;
+  --qt-scrollbar-thumb-hover: #a8a8b4;
+  --qt-selection-bg: rgba(37, 99, 235, 0.15);
+  --qt-badge-bg: rgba(60, 60, 80, 0.06);
+  --qt-badge-text: #3a3a52;
+  --qt-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --qt-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.04), 0 6px 16px rgba(0, 0, 0, 0.06);
+  --qt-focus-ring: 0 0 0 1px #fafafa, 0 0 0 3px rgba(37, 99, 235, 0.3);
+  --qt-segmented-bg: rgba(0, 0, 0, 0.04);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -13,8 +88,8 @@ html, body, #root {
 }
 
 body {
-  background: #1e1e2e;
-  color: #cdd6f4;
+  background: var(--qt-bg);
+  color: var(--qt-text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
@@ -25,18 +100,18 @@ body {
 
 /* Scrollbar styling (Webkit) */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #45475a;
-  border-radius: 3px;
+  background: var(--qt-scrollbar-thumb);
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #585b70;
+  background: var(--qt-scrollbar-thumb-hover);
 }
 
 /* Streaming pulse animation */
@@ -47,8 +122,8 @@ body {
 
 /* Selection color */
 ::selection {
-  background: #89b4fa40;
-  color: #cdd6f4;
+  background: var(--qt-selection-bg);
+  color: var(--qt-text);
 }
 
 /* Code/pre defaults */
@@ -84,8 +159,8 @@ button:not(:disabled):active {
    Uses background-tinted glow instead of generic browser outline. */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px #1e1e2e, 0 0 0 3px rgba(137, 180, 250, 0.45);
-  border-radius: 5px;
+  box-shadow: var(--qt-focus-ring);
+  border-radius: 6px;
 }
 
 /* Tabular utility — drop on any inline number to enforce monospace digits
@@ -107,7 +182,7 @@ button:not(:disabled):active {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: #6c7086;
+  color: var(--qt-text-muted);
 }
 
 /* ── Header buttons (Save / Clear) ─────────────────────────────
@@ -115,19 +190,20 @@ button:not(:disabled):active {
    colored on hover. Respects :disabled and :focus-visible. */
 .qt-header-btn {
   background: transparent;
-  border: 1px solid #2a2a3c;
-  color: #a6adc8;
+  border: 1px solid var(--qt-border);
+  color: var(--qt-text-sub);
   font-size: 11px;
-  padding: 3px 12px;
+  font-weight: 500;
+  padding: 4px 14px;
   border-radius: 999px;
   cursor: pointer;
   letter-spacing: 0.02em;
 }
 
 .qt-header-btn:hover:not(:disabled) {
-  border-color: #393952;
-  color: #cdd6f4;
-  background: rgba(205, 214, 244, 0.04);
+  border-color: var(--qt-border-strong);
+  color: var(--qt-text);
+  background: var(--qt-bg-hover);
 }
 
 .qt-header-btn:disabled {
@@ -136,7 +212,25 @@ button:not(:disabled):active {
 }
 
 .qt-header-btn--danger:hover:not(:disabled) {
-  border-color: rgba(243, 139, 168, 0.5);
-  color: #f38ba8;
-  background: rgba(243, 139, 168, 0.06);
+  border-color: color-mix(in srgb, var(--qt-status-red) 50%, transparent);
+  color: var(--qt-status-red);
+  background: color-mix(in srgb, var(--qt-status-red) 6%, transparent);
+}
+
+/* ── Skeleton shimmer animation ──────────────────────────────── */
+
+@keyframes qt-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.qt-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--qt-border) 25%,
+    var(--qt-bg-hover) 37%,
+    var(--qt-border) 63%
+  );
+  background-size: 200% 100%;
+  animation: qt-shimmer 1.8s ease-in-out infinite;
 }

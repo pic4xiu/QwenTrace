@@ -2,31 +2,27 @@ import React, { useRef, useEffect, useCallback, useState } from 'react';
 import type { TraceEntry } from '../../types';
 import { getAgentRoleMeta } from '../utils/agentRole';
 
-// ── Color palette (dark theme) ──────────────────────────────────
+// ── Color palette (CSS variable references) ─────────────────────
 
 const colors = {
-  bg: '#1e1e2e',
-  selectedBg: '#2a2a3c',
-  selectedAccent: '#89b4fa',
-  hoverBg: 'rgba(205, 214, 244, 0.04)',
-  text: '#cdd6f4',
-  subtext: '#a6adc8',
-  muted: '#6c7086',
-  border: '#2a2a3c',
-  statusGreen: '#a6e3a1',
-  statusRed: '#f38ba8',
-  statusGray: '#6c7086',
-  dotBlue: '#89b4fa',
-  dotGreen: '#a6e3a1',
-  dotRed: '#f38ba8',
-  dotGray: '#6c7086',
+  bg: 'var(--qt-bg)',
+  selectedBg: 'var(--qt-bg-selected)',
+  selectedAccent: 'var(--qt-accent)',
+  hoverBg: 'var(--qt-bg-hover)',
+  text: 'var(--qt-text)',
+  subtext: 'var(--qt-text-sub)',
+  muted: 'var(--qt-text-muted)',
+  border: 'var(--qt-border)',
+  statusGreen: 'var(--qt-status-green)',
+  statusRed: 'var(--qt-status-red)',
+  statusGray: 'var(--qt-text-muted)',
+  dotBlue: 'var(--qt-dot-blue)',
+  dotGreen: 'var(--qt-dot-green)',
+  dotRed: 'var(--qt-dot-red)',
+  dotGray: 'var(--qt-dot-gray)',
 } as const;
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) + '\u2026' : value;
-}
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -38,20 +34,6 @@ function formatTokens(count: number): string {
     return `${(count / 1000).toFixed(1)}K`;
   }
   return String(count);
-}
-
-/**
- * Compose a hex color with an alpha channel suffix.
- * The role chip uses ~12% fill and ~25% border tint to stay quiet against
- * the dark background while still reading as "this row is X kind of call".
- */
-function hexWithAlpha(hex: string, alpha: number): string {
-  // Clamp to [0, 1] then map to a two-digit hex byte.
-  const a = Math.max(0, Math.min(1, alpha));
-  const byte = Math.round(a * 255)
-    .toString(16)
-    .padStart(2, '0');
-  return `${hex}${byte}`;
 }
 
 function statusColor(status: number): string {
@@ -90,17 +72,17 @@ interface RowProps {
   onSelect: (id: string) => void;
 }
 
+const DOT_WIDTH = 7;
+const DOT_GAP = 8;
+const IDX_WIDTH = 22;
+const SECOND_LINE_INDENT = DOT_WIDTH + DOT_GAP + IDX_WIDTH + DOT_GAP;
+
 const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) => {
   const [hovered, setHovered] = useState(false);
 
-  // Detect *which* Qwen Code agent is responsible for this call. The role
-  // is far more informative than the model name in a dense list, so we
-  // surface it as a colored chip immediately after the index.
   const role = getAgentRoleMeta(trace);
 
-  const model = trace.requestBody?.model
-    ? truncate(trace.requestBody.model, 18)
-    : '\u2014';
+  const model = trace.requestBody?.model ?? '\u2014';
 
   const totalTokens = trace.assembled?.usage?.totalTokens;
 
@@ -129,18 +111,18 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
       style={{
         position: 'relative',
         display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '9px 12px 9px 14px',
+        flexDirection: 'column',
+        gap: 4,
+        padding: '12px 14px 12px 16px',
         cursor: 'pointer',
         backgroundColor: bg,
+        boxShadow: isSelected ? 'inset 0 0 0 1px rgba(137, 180, 250, 0.06)' : 'none',
         borderBottom: `1px solid ${colors.border}`,
-        transition: 'background-color 120ms ease',
+        transition: 'background-color 150ms cubic-bezier(0.32, 0.72, 0, 1)',
         userSelect: 'none',
       }}
     >
-      {/* Selection accent stripe — the only place accent appears in the sidebar.
-          Sits flush to the left edge so the eye locks onto the active row. */}
+      {/* Selection accent stripe */}
       <span
         aria-hidden
         style={{
@@ -148,136 +130,139 @@ const SidebarRow: React.FC<RowProps> = ({ index, trace, isSelected, onSelect }) 
           left: 0,
           top: 0,
           bottom: 0,
-          width: 2,
+          width: 3,
           background: isSelected ? colors.selectedAccent : 'transparent',
           transition: 'background 150ms ease',
         }}
       />
 
-      {/* State dot */}
-      <span
-        style={{
-          width: 7,
-          height: 7,
-          minWidth: 7,
-          borderRadius: '50%',
-          backgroundColor: stateDotColor(trace.state),
-          flexShrink: 0,
-          boxShadow:
-            trace.state === 'streaming'
-              ? `0 0 6px ${stateDotColor(trace.state)}`
-              : 'none',
-          ...(trace.state === 'streaming'
-            ? { animation: 'qwtrace-pulse 1.4s ease-in-out infinite' }
-            : {}),
-        }}
-      />
+      {/* ── Row 1: state dot + index + role label … duration ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: DOT_GAP }}>
+        {/* State dot */}
+        <span
+          style={{
+            width: DOT_WIDTH,
+            height: DOT_WIDTH,
+            minWidth: DOT_WIDTH,
+            borderRadius: '50%',
+            backgroundColor: stateDotColor(trace.state),
+            flexShrink: 0,
+            boxShadow:
+              trace.state === 'streaming'
+                ? `0 0 6px ${stateDotColor(trace.state)}`
+                : 'none',
+            ...(trace.state === 'streaming'
+              ? { animation: 'qwtrace-pulse 1.4s ease-in-out infinite' }
+              : {}),
+          }}
+        />
 
-      {/* Index */}
-      <span
-        className="qt-mono"
-        style={{
-          color: colors.muted,
-          fontSize: 10,
-          minWidth: 24,
-          flexShrink: 0,
-        }}
-      >
-        {String(index).padStart(2, '0')}
-      </span>
-
-      {/* Agent role chip — colored dot + short label. Tooltip carries the
-          full description so the chrome stays calm while still being
-          discoverable. The chip uses a tinted-fill bg matching the role
-          color at very low alpha — same hue as the sidebar accent system. */}
-      <span
-        title={`${role.label} — ${role.description}`}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: '2px 6px 2px 5px',
-          borderRadius: 4,
-          background: hexWithAlpha(role.color, 0.12),
-          border: `1px solid ${hexWithAlpha(role.color, 0.25)}`,
-          color: role.color,
-          fontSize: 10,
-          lineHeight: 1.2,
-          fontWeight: 600,
-          letterSpacing: '0.02em',
-          flexShrink: 0,
-          maxWidth: 124,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 9, opacity: 0.9 }}>
-          {role.symbol}
+        {/* Index */}
+        <span
+          className="qt-mono"
+          style={{
+            color: colors.muted,
+            fontSize: 10,
+            width: IDX_WIDTH,
+            flexShrink: 0,
+            textAlign: 'right',
+          }}
+        >
+          {String(index).padStart(2, '0')}
         </span>
-        {role.shortLabel}
-      </span>
 
-      {/* Model name — secondary, muted further now that the role chip carries
-          the primary identity signal. */}
-      <span
-        className="qt-mono"
+        {/* Agent role label */}
+        <span
+          title={`${role.label} — ${role.description}`}
+          className="qt-mono"
+          style={{
+            color: role.color,
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '0.02em',
+            flexShrink: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {role.shortLabel}
+        </span>
+
+        {/* Spacer */}
+        <span style={{ flex: 1 }} />
+
+        {/* Duration — pushed to the right */}
+        <span
+          className="qt-mono"
+          style={{
+            color: colors.muted,
+            fontSize: 10,
+            minWidth: 44,
+            flexShrink: 0,
+            textAlign: 'right',
+          }}
+        >
+          {durationLabel}
+        </span>
+      </div>
+
+      {/* ── Row 2: model name … status code + tokens ── */}
+      <div
         style={{
-          flex: 1,
-          color: isSelected ? colors.subtext : colors.muted,
-          fontSize: 11,
-          fontWeight: isSelected ? 500 : 400,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          paddingLeft: SECOND_LINE_INDENT,
         }}
       >
-        {model}
-      </span>
+        {/* Model name — given ample space on its own line */}
+        <span
+          className="qt-mono"
+          style={{
+            flex: 1,
+            color: isSelected ? colors.subtext : colors.muted,
+            fontSize: 11,
+            fontWeight: isSelected ? 500 : 400,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}
+        >
+          {model}
+        </span>
 
-      {/* Status code */}
-      <span
-        className="qt-mono"
-        style={{
-          color: statusColor(trace.status),
-          fontSize: 11,
-          fontWeight: 600,
-          minWidth: 28,
-          textAlign: 'right',
-          flexShrink: 0,
-        }}
-      >
-        {trace.status || '\u2013'}
-      </span>
+        {/* Status code */}
+        <span
+          className="qt-mono"
+          style={{
+            color: statusColor(trace.status),
+            fontSize: 11,
+            fontWeight: 600,
+            minWidth: 28,
+            textAlign: 'right',
+            flexShrink: 0,
+          }}
+        >
+          {trace.status || '\u2013'}
+        </span>
 
-      {/* Duration */}
-      <span
-        className="qt-mono"
-        style={{
-          color: colors.muted,
-          fontSize: 10,
-          minWidth: 44,
-          textAlign: 'right',
-          flexShrink: 0,
-        }}
-      >
-        {durationLabel}
-      </span>
-
-      {/* Tokens */}
-      <span
-        className="qt-mono"
-        style={{
-          color: totalTokens ? colors.subtext : colors.muted,
-          fontSize: 10,
-          minWidth: 38,
-          textAlign: 'right',
-          flexShrink: 0,
-          opacity: totalTokens ? 1 : 0.4,
-        }}
-      >
-        {totalTokens ? formatTokens(totalTokens) : '\u2013'}
-      </span>
+        {/* Tokens */}
+        <span
+          className="qt-mono"
+          style={{
+            color: totalTokens ? colors.subtext : colors.muted,
+            fontSize: 10,
+            minWidth: 38,
+            textAlign: 'right',
+            flexShrink: 0,
+            opacity: totalTokens ? 1 : 0.4,
+          }}
+        >
+          {totalTokens ? formatTokens(totalTokens) : '\u2013'}
+        </span>
+      </div>
     </div>
   );
 };
@@ -326,7 +311,7 @@ const Sidebar: React.FC<SidebarProps> = ({ traces, selectedId, onSelect }) => {
       {/* Header — eyebrow caps + tabular count, matches the rest of the chrome */}
       <div
         style={{
-          padding: '14px 14px 10px',
+          padding: '16px 16px 12px',
           borderBottom: `1px solid ${colors.border}`,
           display: 'flex',
           alignItems: 'baseline',
@@ -373,22 +358,44 @@ const Sidebar: React.FC<SidebarProps> = ({ traces, selectedId, onSelect }) => {
               lineHeight: 1.6,
             }}
           >
+            {/* Skeleton bars */}
             <div
               aria-hidden
               style={{
-                width: 36,
-                height: 36,
-                margin: '0 auto 14px',
-                borderRadius: 10,
-                border: `1px dashed ${colors.border}`,
                 display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
                 alignItems: 'center',
-                justifyContent: 'center',
-                color: colors.muted,
-                fontSize: 16,
+                marginBottom: 18,
               }}
             >
-              ◌
+              <div
+                className="qt-skeleton"
+                style={{
+                  width: '60%',
+                  height: 8,
+                  borderRadius: 4,
+                  background: colors.border,
+                }}
+              />
+              <div
+                className="qt-skeleton"
+                style={{
+                  width: '80%',
+                  height: 8,
+                  borderRadius: 4,
+                  background: colors.border,
+                }}
+              />
+              <div
+                className="qt-skeleton"
+                style={{
+                  width: '45%',
+                  height: 8,
+                  borderRadius: 4,
+                  background: colors.border,
+                }}
+              />
             </div>
             <div style={{ color: colors.subtext, fontSize: 12, marginBottom: 4 }}>
               Waiting for traffic

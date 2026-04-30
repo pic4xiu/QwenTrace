@@ -105,6 +105,7 @@ recognized roles:
 - **Session recap / title** — short-lived utilities for the session UI
 - **Context compressor** — runs when the chat history overflows
 - **Built-in subagents** — `general-purpose`, `Explore`, `statusline-setup`, agent architect
+- **Webfetch extract** — lightweight content extraction from fetched web pages
 
 Each role gets a colored chip in the sidebar and a prominent identity card at
 the top of the detail panel. Anything that doesn't match a known signature
@@ -112,9 +113,9 @@ is shown as `Unknown` (likely a custom subagent or MCP server).
 
 ## Dashboard
 
-The dashboard is a dark-themed (Catppuccin Mocha) single-page app with:
+The dashboard is a themeable single-page app (system / light / dark) with:
 
-- **Sidebar**: scrollable request list showing role chip, model, status, duration, token count, and streaming state
+- **Sidebar**: scrollable request list with a two-line layout per entry — first line: status dot + sequence number + role chip + duration; second line: model name + status code + token count. Copy button is a borderless SVG icon. Empty state uses a skeleton-line shimmer animation. The first trace is auto-selected on load
 - **Detail panel** with 5 tabs:
   - **Overview** — agent role identity card, URL, model, status, timing, token usage grid
   - **Request** — formatted JSON body with message/tool count badges
@@ -133,7 +134,7 @@ src/
 ├── web/
 │   ├── main.tsx           # React entry
 │   ├── App.tsx            # Layout + header
-│   ├── App.css            # Global styles (Catppuccin Mocha)
+│   ├── App.css            # Global styles (CSS custom properties theme system)
 │   ├── hooks/
 │   │   └── useTraces.ts   # WebSocket hook with auto-reconnect
 │   ├── utils/
@@ -162,7 +163,7 @@ It skips its own reporting calls to `127.0.0.1:${QWENTRACE_PORT}`.
 - **Hook**: ESM module, zero dependencies, pure `globalThis.fetch` patching
 - **Server**: Express + ws (WebSocket), in-memory TraceStore
 - **Frontend**: React 18 + Vite + TypeScript
-- **Styling**: Catppuccin Mocha dark theme, hand-written CSS
+- **Styling**: CSS custom properties theme system (dark/light), hand-written CSS
 
 ## License
 
