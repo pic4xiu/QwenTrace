@@ -1,169 +1,158 @@
 # QwenTrace
 
-Network request visualizer for Qwen Code Agent — like Charles Proxy, but for AI.
+Qwen Code Agent 网络请求可视化工具，像给 AI 调用链做的 Charles Proxy。
 
-QwenTrace captures all HTTP traffic between Qwen Code and AI models (DashScope, OpenAI-compatible endpoints) and displays them in a real-time web dashboard.
+QwenTrace 捕获 Qwen Code 与 AI 模型（DashScope、OpenAI 兼容接口）之间的模型请求，并在实时 Web 面板中可视化展示 request body、SSE 流、token 用量、耗时和 agent 角色。
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-[中文文档](./README_CN.md)
+[English](./README_EN.md)
 
-## How It Works
+## 原理
 
-QwenTrace uses a **fetch hook** approach — it patches `globalThis.fetch` via Node.js `--import` before any application code runs. This lets it transparently intercept all outgoing requests without MITM proxies or certificates.
+QwenTrace 采用 **fetch hook** 方案：通过 Node.js 的 `--import` 在应用代码执行前 patch `globalThis.fetch`，透明拦截模型请求，无需 MITM 代理或证书。
 
 ```
-Qwen Code ──fetch()──► Hook (register.mjs) ──► Real fetch()
+Qwen Code ──fetch()──► Hook (register.mjs) ──► 真正的 fetch()
                            │
                            ▼
                     QwenTrace Server ──WebSocket──► Dashboard
 ```
 
-The hook uses `ReadableStream.tee()` to split SSE streams, so the original caller sees a completely normal response while QwenTrace captures every chunk in the background.
+Hook 利用 `ReadableStream.tee()` 分流 SSE 流。调用方看到的是完全正常的 Response，QwenTrace 在后台捕获每一个 chunk。
 
-## Quick Start
+## 快速开始
 
 ```bash
-# Install dependencies
+# 安装依赖
 npm install
 
-# Build the dashboard
+# 构建前端
 npx vite build
 
-# Run QwenTrace with Qwen Code
+# 启动 QwenTrace 并自动注入 Qwen Code
 npx tsx src/server/index.ts -- qwen
 ```
 
-Open `http://localhost:7890` to see the dashboard.
+打开 `http://localhost:7890` 即可看到面板。
 
-## Usage
+## 使用方式
 
-### Wrap mode (recommended)
+### 包裹模式（推荐）
 
-Launches Qwen Code with the hook automatically injected:
+一条命令启动 QwenTrace，并自动给 Qwen Code 注入 hook：
 
 ```bash
 npx tsx src/server/index.ts -- qwen
 ```
 
-You can also pass flags:
+也可以传额外参数：
 
 ```bash
 npx tsx src/server/index.ts --port 8080 -- qwen --some-flag
 ```
 
-### Manual injection
+### 手动注入
 
-Start the server and inject the hook yourself in a separate terminal:
+分两个终端，分别启动 server 和 Qwen Code：
 
 ```bash
-# Terminal 1: start server
+# 终端 1：启动 server
 npx tsx src/server/index.ts --no-open
 
-# Terminal 2: run Qwen Code with hook
+# 终端 2：带 hook 运行 Qwen Code
 NODE_OPTIONS="--import /path/to/QwenTrace/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
 ```
 
-### Development mode
+### 开发模式
 
-For working on QwenTrace itself (with Vite HMR):
+改 QwenTrace 本身代码时使用（带 Vite 热更新）：
 
 ```bash
 npm run dev
 ```
 
-This starts the backend server and Vite dev server concurrently. Dashboard is at `http://localhost:5173`.
+后端 server 和 Vite dev server 会同时启动，面板地址是 `http://localhost:5173`。
 
-## What It Captures
+## 抓取内容
 
-- **Request**: URL, method, full JSON body (model, messages, tools, parameters)
-- **Response**: status, SSE stream chunks in real-time
-- **Assembled output**: full text, tool calls (with incremental argument assembly), thinking text
-- **Timing**: TTFB, total duration, per-chunk delta timing
-- **Token usage**: prompt tokens, completion tokens, total tokens, cached tokens
-- **Agent role**: which Qwen Code agent emitted the call (see below)
+- **请求**：URL、方法、完整 JSON body（model、messages、tools、参数）
+- **响应**：状态码、SSE 流 chunk 实时捕获
+- **组装结果**：完整文本、thinking 文本、tool calls（增量拼接 arguments）
+- **耗时**：TTFB、总时长、每个 chunk 的间隔时间
+- **Token 用量**：prompt tokens、completion tokens、total tokens、cached tokens
+- **Agent 角色**：识别每个请求来自哪个 Qwen Code agent（见下文）
 
-> Headers are deliberately **not** captured — Qwen Code's pipeline never reads
-> response headers, request headers contain only SDK metadata plus a bearer
-> token (a security risk in shared exports), and stripping them keeps the UI
-> focused on the AI conversation itself.
+> QwenTrace 故意不抓 headers：request headers 里通常包含 SDK 元信息和 bearer token，导出时有泄漏风险；分析 AI 行为主要看 body，headers 帮助不大。
 
-## Agent Role Detection
+## Agent 角色识别
 
-A single `chat/completions` user turn in Qwen Code typically fans out into
-several backend calls — the main interactive agent, an automated memory
-selector, one or two memory-extraction subagents, plus session services
-(title, recap, compression). Without context every row in the sidebar
-looks the same.
+Qwen Code 里你发一句话，背后通常会触发好几个请求：主对话 agent、memory 筛选 subagent、memory extraction subagent，以及 session title / recap / compression 等基础设施服务。如果不区分，sidebar 里每行看起来都一样。
 
-QwenTrace identifies the originating agent for every trace by matching the
-system prompt against the known constants in qwen-code source. Currently
-recognized roles:
+QwenTrace 通过匹配 system prompt 与 qwen-code 源码里的固定常量，自动识别每条 trace 的发起方。当前支持的角色：
 
-- **Main agent** — the interactive CLI agent that responds to your input
-- **Memory selector / extractor / dream** — the three managed-memory subagents
-- **Session recap / title** — short-lived utilities for the session UI
-- **Context compressor** — runs when the chat history overflows
-- **Built-in subagents** — `general-purpose`, `Explore`, `statusline-setup`, agent architect
-- **Webfetch extract** — lightweight content extraction from fetched web pages
+- **Main agent**：真正回应你输入的主对话 agent
+- **Memory selector / extractor / dream**：三个 managed memory 子代理
+- **Session recap / title**：会话相关的短任务服务
+- **Context compressor**：上下文超限时触发的压缩任务
+- **内置 subagent**：`general-purpose`、`Explore`、`statusline-setup`、agent architect
+- **Webfetch extract**：从抓取的网页中轻量提取内容
 
-Each role gets a colored chip in the sidebar and a prominent identity card at
-the top of the detail panel. Anything that doesn't match a known signature
-is shown as `Unknown` (likely a custom subagent or MCP server).
+每个角色在侧边栏对应一个色块徽章，详情页顶部还有一张身份卡。识别不到的会显示为 `Unknown`（一般是自定义 subagent、MCP server，或上游新增角色）。
 
-## Dashboard
+## 面板
 
-The dashboard is a themeable single-page app (system / light / dark) with:
+支持 system / light / dark 三种主题切换的单页应用：
 
-- **Sidebar**: scrollable request list with a two-line layout per entry — first line: status dot + sequence number + role chip + duration; second line: model name + status code + token count. Copy button is a borderless SVG icon. Empty state uses a skeleton-line shimmer animation. The first trace is auto-selected on load
-- **Detail panel** with 5 tabs:
-  - **Overview** — agent role identity card, URL, model, status, timing, token usage grid
-  - **Request** — formatted JSON body with message/tool count badges
-  - **Pretty** — human-rendered view: assembled text, thinking, tool calls
-  - **Raw** — completely unprocessed response body (raw SSE stream or full JSON)
-  - **Timing** — proportional TTFB vs streaming bar, token generation rate
+- **侧边栏**：请求列表，每条 trace 双行布局。第一行是状态点 + 序号 + 角色徽章 + 耗时，第二行是模型名 + 状态码 + token 数。流式请求有呼吸灯，首条 trace 会自动选中。
+- **详情面板** 5 个 Tab：
+  - **Overview**：Agent 角色身份卡、URL、模型、状态、耗时、token 用量
+  - **Request**：格式化 JSON body、message/tool 数量标签
+  - **Pretty**：人类视角渲染，展示组装后的文本、thinking、tool calls
+  - **Raw**：原始响应视图，支持 Stream、Chunks、JSONL
+  - **Timing**：TTFB vs 流式传输比例条、token 生成速率
 
-## Architecture
+## 目录结构
 
 ```
 src/
 ├── hook/
-│   └── register.mjs      # fetch interceptor (loaded via --import)
+│   └── register.mjs       # fetch 拦截器（通过 --import 加载）
 ├── server/
-│   └── index.ts           # Express + WebSocket server, CLI entry, TraceStore
+│   └── index.ts           # Express + WebSocket server、CLI 入口、TraceStore
 ├── web/
-│   ├── main.tsx           # React entry
-│   ├── App.tsx            # Layout + header
-│   ├── App.css            # Global styles (CSS custom properties theme system)
+│   ├── main.tsx           # React 入口
+│   ├── App.tsx            # 布局 + 顶栏
+│   ├── App.css            # 全局样式（CSS custom properties 主题系统）
 │   ├── hooks/
-│   │   └── useTraces.ts   # WebSocket hook with auto-reconnect
+│   │   └── useTraces.ts   # WebSocket hook，自动重连
 │   ├── utils/
-│   │   └── agentRole.ts   # Qwen Code agent role detection (system prompt → role)
+│   │   └── agentRole.ts   # Qwen Code agent 角色识别（system prompt → role）
 │   └── components/
-│       ├── Sidebar.tsx    # Request list with role chips
-│       └── DetailPanel.tsx # 5-tab detail view
-└── types.ts               # Shared types (TraceEntry, TraceEvent, etc.)
+│       ├── Sidebar.tsx    # 请求列表（带角色徽章）
+│       └── DetailPanel.tsx # 5-tab 详情视图
+└── types.ts               # 共享类型（TraceEntry、TraceEvent 等）
 ```
 
-Data flows through 6 event types: `request` → `response-start` → `sse-chunk` (×N) → `complete`. The server assembles SSE chunks into a coherent `AssembledResponse` with full text, tool calls, and usage stats. WebSocket broadcasts keep the dashboard in sync in real-time.
+流式请求的主路径是 `request` → `response-start` → `sse-chunk`（×N） → `complete`。非流式响应会经过 `response-body`，异常会进入 `error`。Server 会把 SSE chunks 组装为完整的 `AssembledResponse`（文本、thinking、tool calls、usage），并通过 WebSocket 实时广播到面板。
 
-## Traced Endpoints
+## 拦截的接口
 
-The hook intercepts requests matching these URL patterns:
+Hook 匹配以下 URL 模式：
 
 - `/chat/completions`
 - `/v1/completions`
 - `/v1/embeddings`
 - `/v1/models`
 
-It skips its own reporting calls to `127.0.0.1:${QWENTRACE_PORT}`.
+它会自动跳过自身的上报请求（`127.0.0.1:${QWENTRACE_PORT}` / `localhost:${QWENTRACE_PORT}`）。
 
-## Tech Stack
+## 技术栈
 
-- **Hook**: ESM module, zero dependencies, pure `globalThis.fetch` patching
-- **Server**: Express + ws (WebSocket), in-memory TraceStore
-- **Frontend**: React 18 + Vite + TypeScript
-- **Styling**: CSS custom properties theme system (dark/light), hand-written CSS
+- **Hook**：ESM 模块，零依赖，纯 `globalThis.fetch` patch
+- **Server**：Express + ws（WebSocket），内存 TraceStore
+- **前端**：React 18 + Vite + TypeScript
+- **样式**：CSS custom properties 主题系统（dark/light），手写 CSS
 
 ## License
 
