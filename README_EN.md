@@ -61,7 +61,13 @@ Start the server and run Qwen Code with the hook in a separate terminal:
 npx tsx src/server/index.ts --no-open
 
 # Terminal 2: run Qwen Code with hook
-NODE_OPTIONS="--import /path/to/QwenTrace/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
+NODE_OPTIONS="--import $(pwd)/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
+```
+
+Run the commands above from the QwenTrace repository root. If you are in another project directory, replace `$(pwd)` with the real absolute path to your QwenTrace checkout, for example:
+
+```bash
+NODE_OPTIONS="--import /Users/you/path/to/QwenTrace/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
 ```
 
 ### Development Mode

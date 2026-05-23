@@ -61,7 +61,13 @@ npx tsx src/server/index.ts --port 8080 -- qwen --some-flag
 npx tsx src/server/index.ts --no-open
 
 # 终端 2：带 hook 运行 Qwen Code
-NODE_OPTIONS="--import /path/to/QwenTrace/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
+NODE_OPTIONS="--import $(pwd)/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
+```
+
+上面的命令需要在 QwenTrace 仓库根目录执行。如果你在其他项目目录里运行，请把 `$(pwd)` 换成 QwenTrace 仓库的真实绝对路径，例如：
+
+```bash
+NODE_OPTIONS="--import /Users/you/path/to/QwenTrace/src/hook/register.mjs" QWENTRACE_PORT=7890 qwen
 ```
 
 ### 开发模式
