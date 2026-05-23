@@ -19,7 +19,7 @@ Qwen Code ──fetch()──► Hook (register.mjs) ──► 真正的 fetch()
                     QwenTrace Server ──WebSocket──► Dashboard
 ```
 
-Hook 利用 `ReadableStream.tee()` 分流 SSE 流。调用方看到的是完全正常的 Response，QwenTrace 在后台捕获每一个 chunk。
+Hook 利用 `ReadableStream.tee()` 分流 SSE 流。调用方看到的是完全正常的 Response，QwenTrace 在后台捕获每一个 `data:` chunk。
 
 ## 快速开始
 
@@ -81,7 +81,7 @@ npm run dev
 - **组装结果**：完整文本、thinking 文本、tool calls（增量拼接 arguments）
 - **耗时**：TTFB、总时长、每个 chunk 的间隔时间
 - **Token 用量**：prompt tokens、completion tokens、total tokens、cached tokens
-- **Agent 角色**：识别每个请求来自哪个 Qwen Code agent（见下文）
+- **Agent 角色**：尽量识别每个请求来自哪个 Qwen Code agent（见下文）
 
 > QwenTrace 故意不抓 headers：request headers 里通常包含 SDK 元信息和 bearer token，导出时有泄漏风险；分析 AI 行为主要看 body，headers 帮助不大。
 
@@ -98,7 +98,7 @@ QwenTrace 通过匹配 system prompt 与 qwen-code 源码里的固定常量，�
 - **内置 subagent**：`general-purpose`、`Explore`、`statusline-setup`、agent architect
 - **Webfetch extract**：从抓取的网页中轻量提取内容
 
-每个角色在侧边栏对应一个色块徽章，详情页顶部还有一张身份卡。识别不到的会显示为 `Unknown`（一般是自定义 subagent、MCP server，或上游新增角色）。
+每个角色在侧边栏对应一个彩色角色标签，详情页顶部还有一张身份卡。识别不到的会显示为 `Unknown`（一般是自定义 subagent、MCP server，或上游新增角色）。
 
 ## 面板
 
